@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -12,6 +14,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.PopupWindow;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -86,10 +89,15 @@ public class MainActivity extends Activity {
     private static final Pattern IP_RE =
             Pattern.compile("\\b(\\d{1,3}\\.){3}\\d{1,3}\\b");
 
-    private static final String[] THEME_NAMES =
-            {"Тёмная", "Чёрная (AMOLED)", "Светлая", "Терминал"};
+    private static final String[] THEME_NAMES = {
+            "Тёмная", "Чёрная (AMOLED)", "Светлая", "Терминал",
+            "Мягкий светлый", "Мягкий тёмный", "Лаванда", "Мята"
+    };
+    private static final boolean[] IS_LIGHT = {
+            false, false, true, false, true, false, false, false
+    };
+    // bg, text, accent, grey, good, warn, bad
     private static final int[][] THEMES = {
-            // bg, text, accent, grey, good, warn, bad
             {0xFF101418, 0xFFE8EAED, 0xFF4FC3F7, 0xFF9AA0A6,
              0xFF66BB6A, 0xFFFFD54F, 0xFFEF5350},
             {0xFF000000, 0xFFE8EAED, 0xFF00E676, 0xFF757575,
@@ -97,8 +105,20 @@ public class MainActivity extends Activity {
             {0xFFF5F5F5, 0xFF212121, 0xFF1565C0, 0xFF757575,
              0xFF2E7D32, 0xFFF9A825, 0xFFC62828},
             {0xFF0D1117, 0xFF3FB950, 0xFF3FB950, 0xFF8B949E,
-             0xFF3FB950, 0xFFD29922, 0xFFF85149}
+             0xFF3FB950, 0xFFD29922, 0xFFF85149},
+            {0xFFFAF7F2, 0xFF4A4440, 0xFF9C7A54, 0xFF9E958D,
+             0xFF5B9A6E, 0xFFC9A227, 0xFFC46B6B},
+            {0xFF22201E, 0xFFE8E2DB, 0xFFC9A97E, 0xFF9A928A,
+             0xFF7CB98F, 0xFFD4B04A, 0xFFD08080},
+            {0xFF232029, 0xFFE6E1F0, 0xFFB8A1D9, 0xFF9A93A8,
+             0xFF8FC7A5, 0xFFD9C06B, 0xFFD98A9A},
+            {0xFF1B2422, 0xFFDDEAE5, 0xFF8FD6BD, 0xFF8FA39C,
+             0xFF8FD6BD, 0xFFD6C56F, 0xFFE08A8A}
     };
+
+    // пороги пинга: до 500 мс — зелёная зона, до 1800 — жёлтая, дальше красная
+    private static final int GOOD_MS = 500;
+    private static final int WARN_MS = 1800;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService pool = Executors.newFixedThreadPool(10);
@@ -129,6 +149,7 @@ public class MainActivity extends Activity {
     private String dragHost;
     private View dragRow;
     private float startRawY;
+    private PopupWindow popup;
 
     private int bg, text, accent, grey, good, warn, bad;
 
@@ -187,7 +208,7 @@ public class MainActivity extends Activity {
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.addView(label("VPN Check", 24, accent, true));
-        head.addView(label("  v1.3", 12, grey, false));
+        head.addView(label("  v1.4", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -212,17 +233,12 @@ public class MainActivity extends Activity {
         controls.addView(btn);
 
         themeBtn = new TextView(this);
-        themeBtn.setText("Тема: " + THEME_NAMES[themeIdx] + "  ▸");
+        themeBtn.setText(THEME_NAMES[themeIdx] + "  ▾");
         themeBtn.setTextColor(accent);
         themeBtn.setTextSize(15);
         themeBtn.setPadding(d(20), d(14), 0, d(14));
         themeBtn.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                themeIdx = (themeIdx + 1) % THEMES.length;
-                getSharedPreferences("vpncheck", MODE_PRIVATE)
-                        .edit().putInt("theme", themeIdx).apply();
-                recreate();
-            }
+            @Override public void onClick(View v) { showThemeMenu(v); }
         });
         controls.addView(themeBtn);
         root.addView(controls);
@@ -263,6 +279,46 @@ public class MainActivity extends Activity {
         });
 
         setContentView(scroll);
+    }
+
+    private void showThemeMenu(View anchor) {
+        boolean light = IS_LIGHT[themeIdx];
+        int surface = light ? 0xFFFFFFFF : 0xFF2B2B2B;
+        int menuText = light ? 0xFF212121 : 0xFFE8EAED;
+
+        LinearLayout menu = new LinearLayout(this);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable bgDraw = new GradientDrawable();
+        bgDraw.setColor(surface);
+        bgDraw.setCornerRadius(d(10));
+        menu.setBackground(bgDraw);
+        menu.setPadding(0, d(6), 0, d(6));
+        menu.setMinimumWidth(d(210));
+
+        for (int i = 0; i < THEME_NAMES.length; i++) {
+            final int idx = i;
+            TextView item = new TextView(this);
+            item.setText((i == themeIdx ? "●  " : "     ") + THEME_NAMES[i]);
+            item.setTextSize(15);
+            item.setTextColor(i == themeIdx ? accent : menuText);
+            item.setPadding(d(20), d(12), d(20), d(12));
+            item.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    themeIdx = idx;
+                    getSharedPreferences("vpncheck", MODE_PRIVATE)
+                            .edit().putInt("theme", idx).apply();
+                    if (popup != null) popup.dismiss();
+                    recreate();
+                }
+            });
+            menu.addView(item);
+        }
+
+        popup = new PopupWindow(menu,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT, true);
+        popup.setBackgroundDrawable(new ColorDrawable(0x00000000));
+        popup.showAsDropDown(anchor);
     }
 
     private void renderLists() {
@@ -397,8 +453,8 @@ public class MainActivity extends Activity {
 
     private int colorFor(String host) {
         Integer ms = resultMs.get(host);
-        if (ms == null) return grey;
-        return ms <= 80 ? good : ms <= 150 ? warn : bad;
+        if (ms == null) return bad;
+        return ms <= GOOD_MS ? good : ms <= WARN_MS ? warn : bad;
     }
 
     private boolean exists(String host) {
