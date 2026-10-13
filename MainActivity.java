@@ -86,6 +86,76 @@ public class MainActivity extends Activity {
             "Магазины", "Игры", "Сеть"
     };
 
+    private static final Map<String, String> COUNTRY_RU =
+            new LinkedHashMap<String, String>();
+    static {
+        COUNTRY_RU.put("RU", "Россия");
+        COUNTRY_RU.put("UA", "Украина");
+        COUNTRY_RU.put("BY", "Беларусь");
+        COUNTRY_RU.put("KZ", "Казахстан");
+        COUNTRY_RU.put("AM", "Армения");
+        COUNTRY_RU.put("GE", "Грузия");
+        COUNTRY_RU.put("AZ", "Азербайджан");
+        COUNTRY_RU.put("UZ", "Узбекистан");
+        COUNTRY_RU.put("KG", "Киргизия");
+        COUNTRY_RU.put("TJ", "Таджикистан");
+        COUNTRY_RU.put("TM", "Туркменистан");
+        COUNTRY_RU.put("MD", "Молдова");
+        COUNTRY_RU.put("US", "США");
+        COUNTRY_RU.put("DE", "Германия");
+        COUNTRY_RU.put("NL", "Нидерланды");
+        COUNTRY_RU.put("FI", "Финляндия");
+        COUNTRY_RU.put("PL", "Польша");
+        COUNTRY_RU.put("TR", "Турция");
+        COUNTRY_RU.put("GB", "Великобритания");
+        COUNTRY_RU.put("FR", "Франция");
+        COUNTRY_RU.put("JP", "Япония");
+        COUNTRY_RU.put("CN", "Китай");
+        COUNTRY_RU.put("KR", "Республика Корея");
+        COUNTRY_RU.put("SE", "Швеция");
+        COUNTRY_RU.put("NO", "Норвегия");
+        COUNTRY_RU.put("DK", "Дания");
+        COUNTRY_RU.put("IS", "Исландия");
+        COUNTRY_RU.put("CH", "Швейцария");
+        COUNTRY_RU.put("AT", "Австрия");
+        COUNTRY_RU.put("BE", "Бельгия");
+        COUNTRY_RU.put("IT", "Италия");
+        COUNTRY_RU.put("ES", "Испания");
+        COUNTRY_RU.put("PT", "Португалия");
+        COUNTRY_RU.put("CZ", "Чехия");
+        COUNTRY_RU.put("SK", "Словакия");
+        COUNTRY_RU.put("RO", "Румыния");
+        COUNTRY_RU.put("BG", "Болгария");
+        COUNTRY_RU.put("RS", "Сербия");
+        COUNTRY_RU.put("GR", "Греция");
+        COUNTRY_RU.put("HU", "Венгрия");
+        COUNTRY_RU.put("LT", "Литва");
+        COUNTRY_RU.put("LV", "Латвия");
+        COUNTRY_RU.put("EE", "Эстония");
+        COUNTRY_RU.put("IE", "Ирландия");
+        COUNTRY_RU.put("CA", "Канада");
+        COUNTRY_RU.put("AU", "Австралия");
+        COUNTRY_RU.put("BR", "Бразилия");
+        COUNTRY_RU.put("AR", "Аргентина");
+        COUNTRY_RU.put("MX", "Мексика");
+        COUNTRY_RU.put("IN", "Индия");
+        COUNTRY_RU.put("SG", "Сингапур");
+        COUNTRY_RU.put("HK", "Гонконг");
+        COUNTRY_RU.put("IL", "Израиль");
+        COUNTRY_RU.put("AE", "ОАЭ");
+        COUNTRY_RU.put("EG", "Египет");
+        COUNTRY_RU.put("ZA", "ЮАР");
+        COUNTRY_RU.put("ID", "Индонезия");
+        COUNTRY_RU.put("MY", "Малайзия");
+        COUNTRY_RU.put("TH", "Таиланд");
+        COUNTRY_RU.put("VN", "Вьетнам");
+        COUNTRY_RU.put("PH", "Филиппины");
+        COUNTRY_RU.put("CY", "Кипр");
+        COUNTRY_RU.put("IE", "Ирландия");
+        COUNTRY_RU.put("LU", "Люксембург");
+        COUNTRY_RU.put("MT", "Мальта");
+    }
+
     private static final Pattern IP_RE =
             Pattern.compile("\\b(\\d{1,3}\\.){3}\\d{1,3}\\b");
 
@@ -129,7 +199,7 @@ public class MainActivity extends Activity {
         }
     };
 
-    private TextView ipView, infoView, themeBtn;
+    private TextView ipView, countryView, infoView, themeBtn;
     private ProgressBar progress;
     private Button btn;
     private LinearLayout listRoot, pinnedContainer;
@@ -208,7 +278,7 @@ public class MainActivity extends Activity {
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.addView(label("VPN Check", 24, accent, true));
-        head.addView(label("  v1.4", 12, grey, false));
+        head.addView(label("  v1.5", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -216,8 +286,13 @@ public class MainActivity extends Activity {
         ipView.setPadding(0, d(14), 0, 0);
         root.addView(ipView);
 
+        countryView = label("", 16, accent, true);
+        countryView.setPadding(0, d(6), 0, 0);
+        countryView.setVisibility(View.GONE);
+        root.addView(countryView);
+
         infoView = label("", 14, grey, false);
-        infoView.setPadding(0, d(6), 0, 0);
+        infoView.setPadding(0, d(2), 0, 0);
         root.addView(infoView);
 
         LinearLayout controls = new LinearLayout(this);
@@ -558,16 +633,24 @@ public class MainActivity extends Activity {
                         if (fIp == null) {
                             ipView.setText("IP: не определён");
                             ipView.setTextColor(bad);
+                            countryView.setVisibility(View.GONE);
                             infoView.setText("Нет интернета или сервисы недоступны");
                         } else {
                             ipView.setText("IP: " + fIp);
                             ipView.setTextColor(text);
-                            String meta = "источник: " + (fSrc == null ? "-" : fSrc);
-                            if (fOrg.length() > 0 || fCountry.length() > 0) {
-                                meta += "\n" + fOrg
-                                        + (fCity.length() > 0 ? " · " + fCity : "")
-                                        + (fCountry.length() > 0 ? " · " + fCountry : "");
+                            if (fCountry.length() == 2) {
+                                String name = COUNTRY_RU.containsKey(fCountry)
+                                        ? COUNTRY_RU.get(fCountry) : fCountry;
+                                String line = flagEmoji(fCountry) + "  " + name;
+                                if (fCity.length() > 0) line += " · " + fCity;
+                                countryView.setText(line);
+                                countryView.setVisibility(View.VISIBLE);
+                            } else {
+                                countryView.setVisibility(View.GONE);
                             }
+                            String meta = "";
+                            if (fOrg.length() > 0) meta += fOrg + "\n";
+                            meta += "источник: " + (fSrc == null ? "-" : fSrc);
                             infoView.setText(meta);
                         }
                     }
@@ -612,6 +695,17 @@ public class MainActivity extends Activity {
     private static class AtomicIntegerMap {
         private int n;
         synchronized int next() { return ++n; }
+    }
+
+    private static String flagEmoji(String cc) {
+        if (cc == null || cc.length() != 2) return "";
+        char a = Character.toUpperCase(cc.charAt(0));
+        char b = Character.toUpperCase(cc.charAt(1));
+        if (a < 'A' || a > 'Z' || b < 'A' || b > 'Z') return "";
+        StringBuilder sb = new StringBuilder();
+        sb.appendCodePoint(0x1F1E6 + (a - 'A'));
+        sb.appendCodePoint(0x1F1E6 + (b - 'A'));
+        return sb.toString();
     }
 
     private static String jsonField(String json, String key) {
