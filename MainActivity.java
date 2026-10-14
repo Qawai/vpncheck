@@ -635,30 +635,35 @@ public class MainActivity extends Activity {
 
         pool.execute(new Runnable() {
             @Override public void run() {
-                // === БЫСТРЫЙ режим: первый ответ от любого источника ===
+                // === БЫСТРЫЙ режим: 2ip.ru как основной источник ===
+                final String[] QUICK_URL = {
+                        "https://2ip.ru/ip/",
+                        "https://api.ipify.org",
+                        "https://ifconfig.me/ip"
+                };
                 final Object qlock = new Object();
                 final String[] quickIp = {null};
                 final int[] qdone = {0};
-                final String[] QUICK_URL = {
-                        "https://api.ipify.org",
-                        "https://2ip.ru/ip/",
-                        "https://ifconfig.me/ip"
-                };
                 for (int i = 0; i < QUICK_URL.length; i++) {
                     final int k = i;
                     pool.execute(new Runnable() {
                         @Override public void run() {
                             String r = fetch(QUICK_URL[k]);
                             if (r != null) {
-                                Matcher m = IP_RE.matcher(r);
-                                if (m.find()) {
-                                    synchronized (qlock) {
-                                        if (quickIp[0] == null)
-                                            quickIp[0] = m.group();
-                                        qdone[0]++;
-                                        qlock.notifyAll();
+                                if (QUICK_URL[k].contains("2ip.ru")
+                                        && r.contains("поискового бота")) {
+                                    r = null;
+                                } else {
+                                    Matcher m = IP_RE.matcher(r);
+                                    if (m.find()) {
+                                        synchronized (qlock) {
+                                            if (quickIp[0] == null)
+                                                quickIp[0] = m.group();
+                                            qdone[0]++;
+                                            qlock.notifyAll();
+                                        }
+                                        return;
                                     }
-                                    return;
                                 }
                             }
                             synchronized (qlock) { qdone[0]++; qlock.notifyAll(); }
@@ -728,6 +733,7 @@ public class MainActivity extends Activity {
                 final Map<String, String> fVotes = new LinkedHashMap<String, String>(votes);
                 final int fAgreeCount = agree;
                 final boolean fAgree = agree >= 2;
+                final String f2ip = votes.get("2ip.ru");
 
                 String org = "", country = "", city = "";
                 String js = fetch("https://ipinfo.io/json");
@@ -764,6 +770,9 @@ public class MainActivity extends Activity {
                         }
                         StringBuilder meta = new StringBuilder();
                         if (fOrg.length() > 0) meta.append(fOrg).append('\n');
+                        if (f2ip != null && !f2ip.equals(deepIp)) {
+                            meta.append("2ip.ru показывает: ").append(f2ip).append('\n');
+                        }
                         if (fAgree) {
                             meta.append("подтверждён ").append(fAgreeCount)
                                     .append(" сервисами");
