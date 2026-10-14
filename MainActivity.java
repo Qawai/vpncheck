@@ -31,6 +31,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
@@ -38,11 +39,16 @@ import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
 
-    private static final String[] IP_SOURCES = {
+    private static final String[] IP_SRC = {
+            "2ip.ru", "ipify", "ip.sb", "icanhazip", "ifconfig.me", "ipinfo.io"
+    };
+    private static final String[] IP_URL = {
             "https://2ip.ru/ip/",
             "https://api.ipify.org",
-            "https://ipinfo.io/ip",
-            "https://ifconfig.me/ip"
+            "https://api.ip.sb/ip",
+            "https://ipv4.icanhazip.com",
+            "https://ifconfig.me/ip",
+            "https://ipinfo.io/ip"
     };
 
     // имя, хост, категория
@@ -199,17 +205,18 @@ public class MainActivity extends Activity {
         }
     };
 
-    private TextView ipView, countryView, infoView, themeBtn;
+    private TextView ipView, deepIpView, countryView, infoView, themeBtn;
     private ProgressBar progress;
     private Button btn;
     private LinearLayout listRoot, pinnedContainer;
     private final Map<String, LinearLayout> catContainers =
             new LinkedHashMap<String, LinearLayout>();
     private final Map<String, TextView> valueViews =
-            new LinkedHashMap<String, TextView>();
+            new ConcurrentHashMap<String, TextView>();
     private final Map<String, String> resultTexts =
-            new LinkedHashMap<String, String>();
-    private final Map<String, Integer> resultMs = new LinkedHashMap<String, Integer>();
+            new ConcurrentHashMap<String, String>();
+    private final Map<String, Integer> resultMs =
+            new ConcurrentHashMap<String, Integer>();
 
     private Set<String> stars = new HashSet<String>();
     private boolean busy;
@@ -278,13 +285,19 @@ public class MainActivity extends Activity {
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.addView(label("VPN Check", 24, accent, true));
-        head.addView(label("  v1.5", 12, grey, false));
+        head.addView(label("  v1.7", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
         ipView.setTypeface(Typeface.MONOSPACE);
         ipView.setPadding(0, d(14), 0, 0);
         root.addView(ipView);
+
+        deepIpView = label("", 14, grey, false);
+        deepIpView.setTypeface(Typeface.MONOSPACE);
+        deepIpView.setPadding(0, d(4), 0, 0);
+        deepIpView.setVisibility(View.GONE);
+        root.addView(deepIpView);
 
         countryView = label("", 16, accent, true);
         countryView.setPadding(0, d(6), 0, 0);
@@ -439,6 +452,7 @@ public class MainActivity extends Activity {
         row.setTag(host);
         row.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
+                if (dragHost != null) return; // во время перетаскивания тапы игнорируем
                 if (stars.contains(host)) stars.remove(host);
                 else stars.add(host);
                 saveStars();
@@ -464,10 +478,18 @@ public class MainActivity extends Activity {
                         startRawY = e.getRawY();
                         return false;
                     case MotionEvent.ACTION_MOVE: {
+                        if (dragRow == null) return true;
                         float dy = e.getRawY() - startRawY;
-                        dragRow.setTranslationY(dy);
                         LinearLayout parent = (LinearLayout) dragRow.getParent();
+                        if (parent == null) { // строки пересозданы — выходим из драга
+                            dragHost = null;
+                            dragRow = null;
+                            return true;
+                        }
+                        dragRow.setTranslationY(dy);
                         int idx = parent.indexOfChild(dragRow);
+                        if (idx < 0) { dragHost = null; dragRow = null; return true; }
+                        parent.requestDisallowInterceptTouchEvent(true);
                         if (idx < parent.getChildCount() - 1) {
                             View next = parent.getChildAt(idx + 1);
                             if (dragRow.getTop() + dy
@@ -493,9 +515,11 @@ public class MainActivity extends Activity {
                     }
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
-                        dragRow.setTranslationY(0);
-                        dragRow.setAlpha(1f);
-                        dragRow.setBackgroundColor(0);
+                        if (dragRow != null) {
+                            dragRow.setTranslationY(0);
+                            dragRow.setAlpha(1f);
+                            dragRow.setBackgroundColor(0);
+                        }
                         saveOrder();
                         dragHost = null;
                         dragRow = null;
@@ -611,13 +635,100 @@ public class MainActivity extends Activity {
 
         pool.execute(new Runnable() {
             @Override public void run() {
-                String ip = null, source = null;
-                for (String u : IP_SOURCES) {
-                    String r = fetch(u);
-                    if (r == null) continue;
-                    Matcher m = IP_RE.matcher(r);
-                    if (m.find()) { ip = m.group(); source = hostOf(u); break; }
+                // === БЫСТРЫЙ режим: первый ответ от любого источника ===
+                final Object qlock = new Object();
+                final String[] quickIp = {null};
+                final int[] qdone = {0};
+                final String[] QUICK_URL = {
+                        "https://api.ipify.org",
+                        "https://2ip.ru/ip/",
+                        "https://ifconfig.me/ip"
+                };
+                for (int i = 0; i < QUICK_URL.length; i++) {
+                    final int k = i;
+                    pool.execute(new Runnable() {
+                        @Override public void run() {
+                            String r = fetch(QUICK_URL[k]);
+                            if (r != null) {
+                                Matcher m = IP_RE.matcher(r);
+                                if (m.find()) {
+                                    synchronized (qlock) {
+                                        if (quickIp[0] == null)
+                                            quickIp[0] = m.group();
+                                        qdone[0]++;
+                                        qlock.notifyAll();
+                                    }
+                                    return;
+                                }
+                            }
+                            synchronized (qlock) { qdone[0]++; qlock.notifyAll(); }
+                        }
+                    });
                 }
+                synchronized (qlock) {
+                    while (quickIp[0] == null && qdone[0] < QUICK_URL.length) {
+                        try { qlock.wait(1500); } catch (InterruptedException e) { break; }
+                    }
+                }
+                final String surfaceIp = quickIp[0];
+                ui.post(new Runnable() {
+                    @Override public void run() {
+                        if (surfaceIp != null) {
+                            ipView.setText("IP: " + surfaceIp);
+                            ipView.setTextColor(text);
+                        }
+                    }
+                });
+
+                // === ГЛУБОКИЙ режим: консенсус всех источников + детали ===
+                final Map<String, String> votes =
+                        new LinkedHashMap<String, String>();
+                final Object vlock = new Object();
+                final int[] vdone = {0};
+                for (int i = 0; i < IP_URL.length; i++) {
+                    final int k = i;
+                    pool.execute(new Runnable() {
+                        @Override public void run() {
+                            String r = fetch(IP_URL[k]);
+                            String got = null;
+                            if (r != null) {
+                                if (IP_SRC[k].equals("2ip.ru")
+                                        && r.contains("поискового бота")) {
+                                    r = null;
+                                } else {
+                                    Matcher m = IP_RE.matcher(r);
+                                    if (m.find()) got = m.group();
+                                }
+                            }
+                            synchronized (vlock) {
+                                if (got != null)
+                                    votes.put(IP_SRC[k], got);
+                                vdone[0]++;
+                                vlock.notifyAll();
+                            }
+                        }
+                    });
+                }
+                synchronized (vlock) {
+                    while (vdone[0] < IP_URL.length) {
+                        try { vlock.wait(800); } catch (InterruptedException e) { break; }
+                    }
+                }
+
+                String consensus = null;
+                int agree = 0;
+                for (Map.Entry<String, String> e : votes.entrySet()) {
+                    int n = 0;
+                    for (Map.Entry<String, String> e2 : votes.entrySet())
+                        if (e2.getValue().equals(e.getValue())) n++;
+                    if (n > agree) { agree = n; consensus = e.getValue(); }
+                }
+                final String deepIp = consensus != null ? consensus
+                        : (votes.isEmpty() ? null : votes.values().iterator().next());
+                final Map<String, String> fVotes = new LinkedHashMap<String, String>(votes);
+                final int fAgreeCount = agree;
+                final boolean fAgree = agree >= 2;
+
                 String org = "", country = "", city = "";
                 String js = fetch("https://ipinfo.io/json");
                 if (js != null) {
@@ -626,33 +737,44 @@ public class MainActivity extends Activity {
                     city = jsonField(js, "city");
                 }
                 final String fOrg = org, fCountry = country, fCity = city;
-                final String fIp = ip, fSrc = source;
 
                 ui.post(new Runnable() {
                     @Override public void run() {
-                        if (fIp == null) {
-                            ipView.setText("IP: не определён");
-                            ipView.setTextColor(bad);
-                            countryView.setVisibility(View.GONE);
-                            infoView.setText("Нет интернета или сервисы недоступны");
-                        } else {
-                            ipView.setText("IP: " + fIp);
-                            ipView.setTextColor(text);
-                            if (fCountry.length() == 2) {
-                                String name = COUNTRY_RU.containsKey(fCountry)
-                                        ? COUNTRY_RU.get(fCountry) : fCountry;
-                                String line = flagEmoji(fCountry) + "  " + name;
-                                if (fCity.length() > 0) line += " · " + fCity;
-                                countryView.setText(line);
-                                countryView.setVisibility(View.VISIBLE);
-                            } else {
+                        if (deepIp == null) {
+                            deepIpView.setVisibility(View.GONE);
+                            if (surfaceIp == null) {
+                                ipView.setText("IP: не определён");
+                                ipView.setTextColor(bad);
                                 countryView.setVisibility(View.GONE);
+                                infoView.setText("Нет интернета или сервисы недоступны");
                             }
-                            String meta = "";
-                            if (fOrg.length() > 0) meta += fOrg + "\n";
-                            meta += "источник: " + (fSrc == null ? "-" : fSrc);
-                            infoView.setText(meta);
+                            return;
                         }
+                        deepIpView.setText("Глубокий: " + deepIp);
+                        deepIpView.setVisibility(View.VISIBLE);
+                        if (fCountry.length() == 2) {
+                            String name = COUNTRY_RU.containsKey(fCountry)
+                                    ? COUNTRY_RU.get(fCountry) : fCountry;
+                            String line = flagEmoji(fCountry) + "  " + name;
+                            if (fCity.length() > 0) line += " · " + fCity;
+                            countryView.setText(line);
+                            countryView.setVisibility(View.VISIBLE);
+                        } else {
+                            countryView.setVisibility(View.GONE);
+                        }
+                        StringBuilder meta = new StringBuilder();
+                        if (fOrg.length() > 0) meta.append(fOrg).append('\n');
+                        if (fAgree) {
+                            meta.append("подтверждён ").append(fAgreeCount)
+                                    .append(" сервисами");
+                        } else if (fVotes.size() > 1) {
+                            meta.append("источники расходятся:\n");
+                            for (Map.Entry<String, String> e : fVotes.entrySet())
+                                meta.append("• ").append(e.getKey())
+                                        .append(" → ").append(e.getValue())
+                                        .append('\n');
+                        }
+                        infoView.setText(meta.toString());
                     }
                 });
 
@@ -712,10 +834,6 @@ public class MainActivity extends Activity {
         Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"")
                 .matcher(json);
         return m.find() ? m.group(1) : "";
-    }
-
-    private static String hostOf(String url) {
-        try { return new URL(url).getHost(); } catch (Exception e) { return url; }
     }
 
     private static String fetch(String u) {
