@@ -2,7 +2,6 @@ package com.qawai.vpncheck;
 
 import android.app.Activity;
 import android.content.SharedPreferences;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -92,6 +91,17 @@ public class MainActivity extends Activity {
             "Магазины", "Игры", "Сеть"
     };
 
+    private static final Map<String, String> HOST_NAME =
+            new LinkedHashMap<String, String>();
+    private static final Map<String, String> HOST_CAT =
+            new LinkedHashMap<String, String>();
+    static {
+        for (String[] s : SERVICES) {
+            HOST_NAME.put(s[1], s[0]);
+            HOST_CAT.put(s[1], s[2]);
+        }
+    }
+
     private static final Map<String, String> COUNTRY_RU =
             new LinkedHashMap<String, String>();
     static {
@@ -157,7 +167,6 @@ public class MainActivity extends Activity {
         COUNTRY_RU.put("VN", "Вьетнам");
         COUNTRY_RU.put("PH", "Филиппины");
         COUNTRY_RU.put("CY", "Кипр");
-        COUNTRY_RU.put("IE", "Ирландия");
         COUNTRY_RU.put("LU", "Люксембург");
         COUNTRY_RU.put("MT", "Мальта");
     }
@@ -222,6 +231,7 @@ public class MainActivity extends Activity {
     private boolean busy;
     private float dp;
     private int themeIdx;
+    private SharedPreferences prefs;
 
     private String dragHost;
     private View dragRow;
@@ -234,9 +244,9 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         dp = getResources().getDisplayMetrics().density;
-        SharedPreferences p = getSharedPreferences("vpncheck", MODE_PRIVATE);
-        themeIdx = p.getInt("theme", 0);
-        stars = new HashSet<String>(p.getStringSet("stars", new HashSet<String>()));
+        prefs = getSharedPreferences("vpncheck", MODE_PRIVATE);
+        themeIdx = prefs.getInt("theme", 0);
+        stars = new HashSet<String>(prefs.getStringSet("stars", new HashSet<String>()));
         applyTheme();
         buildUi();
         renderLists();
@@ -284,8 +294,8 @@ public class MainActivity extends Activity {
 
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
-        head.addView(label("VPN Check", 24, accent, true));
-        head.addView(label("  v1.7", 12, grey, false));
+        head.addView(label("Check Connect", 24, accent, true));
+        head.addView(label("  v1.8", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -393,8 +403,7 @@ public class MainActivity extends Activity {
             item.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) {
                     themeIdx = idx;
-                    getSharedPreferences("vpncheck", MODE_PRIVATE)
-                            .edit().putInt("theme", idx).apply();
+                    prefs.edit().putInt("theme", idx).apply();
                     if (popup != null) popup.dismiss();
                     recreate();
                 }
@@ -557,30 +566,24 @@ public class MainActivity extends Activity {
     }
 
     private boolean exists(String host) {
-        for (String[] s : SERVICES) if (s[1].equals(host)) return true;
-        return false;
+        return HOST_NAME.containsKey(host);
     }
 
     private String nameOf(String host) {
-        for (String[] s : SERVICES) if (s[1].equals(host)) return s[0];
-        return host;
+        String n = HOST_NAME.get(host);
+        return n != null ? n : host;
     }
 
     private boolean inCategory(String host, String cat) {
-        for (String[] s : SERVICES)
-            if (s[1].equals(host) && s[2].equals(cat)) return true;
-        return false;
+        return cat.equals(HOST_CAT.get(host));
     }
 
     private List<String> allHosts() {
-        List<String> l = new ArrayList<String>();
-        for (String[] s : SERVICES) l.add(s[1]);
-        return l;
+        return new ArrayList<String>(HOST_NAME.keySet());
     }
 
     private List<String> loadOrder(String key) {
-        SharedPreferences p = getSharedPreferences("vpncheck", MODE_PRIVATE);
-        String saved = p.getString("order_" + key, "");
+        String saved = prefs.getString("order_" + key, "");
         List<String> out = new ArrayList<String>();
         if (saved.length() > 0) {
             for (String h : saved.split(",")) {
@@ -596,8 +599,7 @@ public class MainActivity extends Activity {
     }
 
     private void saveOrder() {
-        SharedPreferences.Editor ed =
-                getSharedPreferences("vpncheck", MODE_PRIVATE).edit();
+        SharedPreferences.Editor ed = prefs.edit();
         StringBuilder pin = new StringBuilder();
         for (int i = 0; i < pinnedContainer.getChildCount(); i++) {
             if (i > 0) pin.append(',');
@@ -617,7 +619,7 @@ public class MainActivity extends Activity {
     }
 
     private void saveStars() {
-        getSharedPreferences("vpncheck", MODE_PRIVATE).edit()
+        prefs.edit()
                 .putStringSet("stars", new LinkedHashSet<String>(stars)).apply();
     }
 
@@ -788,7 +790,7 @@ public class MainActivity extends Activity {
                 });
 
                 final List<String> hosts = allHosts();
-                final AtomicIntegerMap done = new AtomicIntegerMap();
+                final Counter done = new Counter();
                 for (final String host : hosts) {
                     pool.execute(new Runnable() {
                         @Override public void run() {
@@ -823,7 +825,7 @@ public class MainActivity extends Activity {
         });
     }
 
-    private static class AtomicIntegerMap {
+    private static class Counter {
         private int n;
         synchronized int next() { return ++n; }
     }
@@ -878,15 +880,15 @@ public class MainActivity extends Activity {
             c.setConnectTimeout(5000);
             c.setReadTimeout(5000);
             c.setRequestMethod("GET");
-            c.setInstanceFollowRedirects(true);
+            c.setInstanceFollowRedirects(false);
             c.setRequestProperty("User-Agent",
-                    "Mozilla/5.0 (Linux; Android 13) VPNCheck/1.3");
+                    "Mozilla/5.0 (Linux; Android 13) VPNCheck/1.8");
             c.setRequestProperty("Accept", "*/*");
-            // код ответа = сервер реально отвечает
+            // любой ответ сервера (даже 3xx/4xx) = сервис доступен.
+            // редиректы не следуем: у части сайтов они зациклены/ведут на заблокированный домен.
             int code = c.getResponseCode();
-            if (code < 200) return null;
+            if (code <= 0) return null;
             int ms = (int) ((System.nanoTime() - t0) / 1000000);
-            // прочитать немного тела, чтобы убедиться, что поток живой
             InputStream in = (code >= 400) ? c.getErrorStream() : c.getInputStream();
             if (in != null) {
                 byte[] buf = new byte[256];
