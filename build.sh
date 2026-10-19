@@ -27,6 +27,7 @@ javac -source 1.8 -target 1.8 -classpath "android30.jar:gen" \
   -d classes \
   src/com/qawai/vpncheck/MainActivity.java \
   src/com/qawai/vpncheck/StatusWidget.java \
+  src/com/qawai/vpncheck/GaugeView.java \
   gen/R.java 2>&1 | grep -v "bootstrap class path" || true
 
 echo "[4/6] d8 -> dex..."

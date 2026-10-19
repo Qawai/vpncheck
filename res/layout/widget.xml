@@ -16,12 +16,30 @@
         android:textStyle="bold"/>
 
     <TextView
-        android:id="@+id/w_status"
+        android:id="@+id/w_g"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="—"
+        android:text="● 0 быстрых"
         android:textColor="#FF66BB6A"
-        android:textSize="16sp"
+        android:textSize="13sp"
+        android:textStyle="bold"/>
+
+    <TextView
+        android:id="@+id/w_y"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="● 0 средних"
+        android:textColor="#FFFFD54F"
+        android:textSize="13sp"
+        android:textStyle="bold"/>
+
+    <TextView
+        android:id="@+id/w_r"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="● 0 недоступно"
+        android:textColor="#FFEF5350"
+        android:textSize="13sp"
         android:textStyle="bold"/>
 
     <TextView

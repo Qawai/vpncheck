@@ -2,10 +2,14 @@ package com.qawai.vpncheck;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.DialogInterface;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -22,22 +26,27 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
+import android.text.InputType;
 import android.text.TextWatcher;
+import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
-import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -107,7 +116,7 @@ public class MainActivity extends Activity {
 
     private static final String[] CATEGORIES = {
             "Соцсети и мессенджеры", "Стриминг и видео", "Поиск и сервисы",
-            "Магазины", "Игры", "Сеть"
+            "Магазины", "Игры", "Сеть", "Иные"
     };
 
     private static final Map<String, String> HOST_NAME =
@@ -219,8 +228,14 @@ public class MainActivity extends Activity {
             {0xFF1B2422, 0xFFDDEAE5, 0xFF8FD6BD, 0xFF8FA39C,
              0xFF8FD6BD, 0xFFD6C56F, 0xFFE08A8A}
     };
+    // оранжевый для "медленных, но рабочих"
+    private static final int[] ORANGE = {
+            0xFFFFA726, 0xFFFFA726, 0xFFEF6C00, 0xFFD99A2B,
+            0xFFC98A2E, 0xFFD69A4A, 0xFFC79A5A, 0xFF4FB0A0
+    };
 
     private static final String NOTIF_CHANNEL = "status";
+    private static final String PINNED_KEY = "★ Закреплённые";
 
     // эндпоинты для замера скорости скачивания
     private static final String[] SPEED_URLS = {
@@ -229,6 +244,11 @@ public class MainActivity extends Activity {
             "https://speed.cloudflare.com/__down?bytes=5000000",
             "http://ftp.debian.org/debian/README"
     };
+    private static final String SPEED_UPLOAD_URL = "https://speed.cloudflare.com/__up";
+
+    // пороги времени отклика: до 500 мс — зелёные, до 1800 — жёлтые, дальше красные
+    private static final int GOOD_MS = 500;
+    private static final int WARN_MS = 1800;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService pool = Executors.newFixedThreadPool(32);
@@ -241,7 +261,7 @@ public class MainActivity extends Activity {
 
     private TextView ipView, deepIpView, countryView, infoView, themeBtn, notifyBtn;
     private ProgressBar progress;
-    private Button btn, speedBtn;
+    private TextView btn, speedBtn;
     private LinearLayout listRoot, pinnedContainer, availabilityContainer, speedContainer;
     private TextView tabAvail, tabSpeed, speedResultView, speedServerView;
     private final Map<String, LinearLayout> catContainers =
@@ -254,6 +274,16 @@ public class MainActivity extends Activity {
             new ConcurrentHashMap<String, Integer>();
     private final Map<String, Integer> resultCodes =
             new ConcurrentHashMap<String, Integer>();
+
+    // пользовательские сервисы, переименования, удалённые системные
+    private final List<String[]> customServices = new ArrayList<String[]>();
+    private final Map<String, String> renames = new LinkedHashMap<String, String>();
+    private final Set<String> deleted = new HashSet<String>();
+    private final Set<String> collapsed = new HashSet<String>();
+    private boolean editMode;
+    private TextView summaryView, manageBtn, addBtn, shareBtn;
+    private GaugeView gaugeView;
+    private TextView upView, jitView, lossView;
 
     private EditText searchView;
     private String query = "";
@@ -276,7 +306,7 @@ public class MainActivity extends Activity {
     private float startRawY;
     private PopupWindow popup;
 
-    private int bg, text, accent, grey, good, warn, bad;
+    private int bg, text, accent, grey, good, warn, bad, orange;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -286,6 +316,7 @@ public class MainActivity extends Activity {
         notifOn = prefs.getBoolean("notif", false);
         themeIdx = prefs.getInt("theme", 0);
         stars = new HashSet<String>(prefs.getStringSet("stars", new HashSet<String>()));
+        loadCustom();
         applyTheme();
         lastEffectiveTheme = effectiveTheme();
         applyThemeIcon();
@@ -329,6 +360,7 @@ public class MainActivity extends Activity {
         int[] t = THEMES[effectiveTheme()];
         bg = t[0]; text = t[1]; accent = t[2]; grey = t[3];
         good = t[4]; warn = t[5]; bad = t[6];
+        orange = ORANGE[effectiveTheme()];
     }
 
     private boolean isNight() {
@@ -378,6 +410,15 @@ public class MainActivity extends Activity {
         return t;
     }
 
+    // ободок вокруг кнопок, чтобы отличались от обычного текста
+    private void styleButton(View v) {
+        GradientDrawable gd = new GradientDrawable();
+        gd.setStroke(d(2), accent);
+        gd.setCornerRadius(d(10));
+        gd.setColor(IS_LIGHT[themeIdx] ? 0x0F000000 : 0x14FFFFFF);
+        v.setBackground(gd);
+    }
+
     private void buildUi() {
         final ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(bg);
@@ -390,12 +431,24 @@ public class MainActivity extends Activity {
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.addView(label("Check Connection", 24, accent, true));
-        head.addView(label("  v1.12.1", 12, grey, false));
+        head.addView(label("  v2.0.1", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
         ipView.setTypeface(Typeface.MONOSPACE);
         ipView.setPadding(0, d(14), 0, 0);
+        ipView.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                String t = ipView.getText().toString().replace("IP: ", "");
+                if (t.length() > 0) {
+                    ClipboardManager cm =
+                            (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("IP", t));
+                    Toast.makeText(MainActivity.this, "IP скопирован",
+                            Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
         root.addView(ipView);
 
         deepIpView = label("", 14, grey, false);
@@ -417,9 +470,12 @@ public class MainActivity extends Activity {
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setPadding(0, d(14), 0, 0);
 
-        btn = new Button(this);
+        btn = new TextView(this);
         btn.setText("Обновить");
+        btn.setTextSize(15);
         btn.setTextColor(accent);
+        btn.setPadding(d(16), d(12), d(16), d(12));
+        styleButton(btn);
         btn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { refresh(); }
         });
@@ -429,7 +485,8 @@ public class MainActivity extends Activity {
         themeBtn.setText(THEME_NAMES[themeIdx] + "  ▾");
         themeBtn.setTextColor(accent);
         themeBtn.setTextSize(15);
-        themeBtn.setPadding(d(20), d(14), 0, d(14));
+        themeBtn.setPadding(d(16), d(12), d(16), d(12));
+        styleButton(themeBtn);
         themeBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showThemeMenu(v); }
         });
@@ -439,13 +496,57 @@ public class MainActivity extends Activity {
         notifyBtn.setText(notifOn ? "Уведомления ✓" : "Уведомления");
         notifyBtn.setTextColor(notifOn ? accent : grey);
         notifyBtn.setTextSize(14);
-        notifyBtn.setPadding(d(20), d(14), 0, d(14));
+        notifyBtn.setPadding(d(16), d(12), d(16), d(12));
+        styleButton(notifyBtn);
         notifyBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { toggleNotifications(); }
         });
         controls.addView(notifyBtn);
 
+        shareBtn = new TextView(this);
+        shareBtn.setText("Поделиться");
+        shareBtn.setTextColor(accent);
+        shareBtn.setTextSize(14);
+        shareBtn.setPadding(d(16), d(12), d(16), d(12));
+        styleButton(shareBtn);
+        shareBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { shareResults(); }
+        });
+        controls.addView(shareBtn);
+
         root.addView(controls);
+
+        LinearLayout controls2 = new LinearLayout(this);
+        controls2.setOrientation(LinearLayout.HORIZONTAL);
+        controls2.setPadding(0, d(8), 0, 0);
+
+        manageBtn = new TextView(this);
+        manageBtn.setText(editMode ? "Готово" : "Управление");
+        manageBtn.setTextColor(accent);
+        manageBtn.setTextSize(14);
+        manageBtn.setPadding(d(16), d(10), d(16), d(10));
+        styleButton(manageBtn);
+        manageBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                editMode = !editMode;
+                manageBtn.setText(editMode ? "Готово" : "Управление");
+                renderLists();
+            }
+        });
+        controls2.addView(manageBtn);
+
+        addBtn = new TextView(this);
+        addBtn.setText("+ Добавить сайт");
+        addBtn.setTextColor(accent);
+        addBtn.setTextSize(14);
+        addBtn.setPadding(d(16), d(10), d(16), d(10));
+        styleButton(addBtn);
+        addBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showAddDialog(); }
+        });
+        controls2.addView(addBtn);
+
+        root.addView(controls2);
 
         progress = new ProgressBar(this);
         progress.setIndeterminate(true);
@@ -462,7 +563,8 @@ public class MainActivity extends Activity {
         tabAvail = new TextView(this);
         tabAvail.setText("Доступность");
         tabAvail.setTextSize(16);
-        tabAvail.setPadding(0, d(6), d(24), d(6));
+        tabAvail.setPadding(d(18), d(10), d(18), d(10));
+        styleButton(tabAvail);
         tabAvail.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showTab(true); }
         });
@@ -470,12 +572,17 @@ public class MainActivity extends Activity {
         tabSpeed = new TextView(this);
         tabSpeed.setText("Скорость");
         tabSpeed.setTextSize(16);
-        tabSpeed.setPadding(0, d(6), 0, d(6));
+        tabSpeed.setPadding(d(18), d(10), d(18), d(10));
+        styleButton(tabSpeed);
         tabSpeed.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showTab(false); }
         });
         tabs.addView(tabSpeed);
         root.addView(tabs);
+
+        summaryView = label("", 14, accent, true);
+        summaryView.setPadding(0, d(10), 0, 0);
+        root.addView(summaryView);
 
         // контейнер доступности
         availabilityContainer = new LinearLayout(this);
@@ -511,17 +618,39 @@ public class MainActivity extends Activity {
         speedContainer.setOrientation(LinearLayout.VERTICAL);
         speedContainer.setVisibility(View.GONE);
 
-        speedResultView = label("—", 22, text, true);
-        speedResultView.setPadding(0, d(16), 0, 0);
+        gaugeView = new GaugeView(this);
+        gaugeView.setTheme(accent, good, warn);
+        LinearLayout.LayoutParams gp = new LinearLayout.LayoutParams(d(220), d(130));
+        gp.gravity = Gravity.CENTER_HORIZONTAL;
+        gp.topMargin = d(10);
+        speedContainer.addView(gaugeView, gp);
+
+        speedResultView = label("—", 20, text, true);
+        speedResultView.setPadding(0, d(10), 0, 0);
         speedContainer.addView(speedResultView);
 
-        speedServerView = label("", 14, grey, false);
+        upView = label("", 15, text, false);
+        upView.setPadding(0, d(2), 0, 0);
+        speedContainer.addView(upView);
+
+        jitView = label("", 14, grey, false);
+        jitView.setPadding(0, d(2), 0, 0);
+        speedContainer.addView(jitView);
+
+        lossView = label("", 14, grey, false);
+        lossView.setPadding(0, d(2), 0, 0);
+        speedContainer.addView(lossView);
+
+        speedServerView = label("", 13, grey, false);
         speedServerView.setPadding(0, d(4), 0, 0);
         speedContainer.addView(speedServerView);
 
-        speedBtn = new Button(this);
+        speedBtn = new TextView(this);
         speedBtn.setText("Замерить скорость");
+        speedBtn.setTextSize(15);
         speedBtn.setTextColor(accent);
+        speedBtn.setPadding(d(16), d(12), d(16), d(12));
+        styleButton(speedBtn);
         speedBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { runSpeedTest(); }
         });
@@ -540,10 +669,7 @@ public class MainActivity extends Activity {
 
         scroll.setOnTouchListener(new View.OnTouchListener() {
             @Override public boolean onTouch(View v, MotionEvent e) {
-                if (dragRow != null) {
-                    v.getParent().requestDisallowInterceptTouchEvent(true);
-                    return true;
-                }
+                if (dragRow != null) scroll.requestDisallowInterceptTouchEvent(true);
                 return false;
             }
         });
@@ -611,10 +737,16 @@ public class MainActivity extends Activity {
                 && !visPinned.contains(h)) visPinned.add(h);
 
         if (!visPinned.isEmpty()) {
-            listRoot.addView(sectionHeader("★ Закреплённые"));
+            TextView pinHeader = sectionHeader(
+                    (collapsed.contains(PINNED_KEY) ? "▸ " : "▾ ") + "★ Закреплённые");
+            pinHeader.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { toggleCollapse(PINNED_KEY); }
+            });
+            listRoot.addView(pinHeader);
             pinnedContainer.removeAllViews();
+            if (!collapsed.contains(PINNED_KEY))
+                for (String h : visPinned) pinnedContainer.addView(createRow(h));
             listRoot.addView(pinnedContainer);
-            for (String h : visPinned) pinnedContainer.addView(createRow(h));
         }
 
         for (String cat : CATEGORIES) {
@@ -625,9 +757,23 @@ public class MainActivity extends Activity {
                 cont.addView(createRow(h));
             }
             if (cont.getChildCount() == 0) continue;
-            listRoot.addView(sectionHeader(cat));
+            final String c = cat;
+            TextView header = sectionHeader(
+                    (collapsed.contains(cat) ? "▸ " : "▾ ") + cat);
+            header.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { toggleCollapse(c); }
+            });
+            listRoot.addView(header);
+            cont.setVisibility(collapsed.contains(cat) ? View.GONE : View.VISIBLE);
             listRoot.addView(cont);
         }
+    }
+
+    private void toggleCollapse(String key) {
+        if (collapsed.contains(key)) collapsed.remove(key);
+        else collapsed.add(key);
+        saveCollapsed();
+        renderLists();
     }
 
     private boolean matches(String host) {
@@ -642,6 +788,18 @@ public class MainActivity extends Activity {
         return h;
     }
 
+    private void resetDrag() {
+        if (dragRow != null) {
+            try {
+                dragRow.setTranslationY(0);
+                dragRow.setAlpha(1f);
+                dragRow.setBackgroundColor(0);
+            } catch (Throwable ignored) {}
+        }
+        dragHost = null;
+        dragRow = null;
+    }
+
     private LinearLayout createRow(final String host) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -649,7 +807,7 @@ public class MainActivity extends Activity {
         row.setTag(host);
         row.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
-                if (dragHost != null) return; // во время перетаскивания тапы игнорируем
+                if (editMode || dragHost != null) return;
                 if (stars.contains(host)) stars.remove(host);
                 else stars.add(host);
                 saveStars();
@@ -658,6 +816,7 @@ public class MainActivity extends Activity {
         });
         row.setOnLongClickListener(new View.OnLongClickListener() {
             @Override public boolean onLongClick(View v) {
+                if (editMode) return false;
                 dragHost = host;
                 dragRow = v;
                 v.setAlpha(0.85f);
@@ -670,57 +829,58 @@ public class MainActivity extends Activity {
         row.setOnTouchListener(new View.OnTouchListener() {
             @Override public boolean onTouch(View v, MotionEvent e) {
                 if (!host.equals(dragHost)) return false;
-                switch (e.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        startRawY = e.getRawY();
-                        return false;
-                    case MotionEvent.ACTION_MOVE: {
-                        if (dragRow == null) return true;
-                        float dy = e.getRawY() - startRawY;
-                        LinearLayout parent = (LinearLayout) dragRow.getParent();
-                        if (parent == null) { // строки пересозданы — выходим из драга
+                try {
+                    switch (e.getActionMasked()) {
+                        case MotionEvent.ACTION_DOWN:
+                            startRawY = e.getRawY();
+                            return false;
+                        case MotionEvent.ACTION_MOVE: {
+                            if (dragRow == null) return true;
+                            float dy = e.getRawY() - startRawY;
+                            LinearLayout parent = (LinearLayout) dragRow.getParent();
+                            if (parent == null) { resetDrag(); return true; }
+                            dragRow.setTranslationY(dy);
+                            int idx = parent.indexOfChild(dragRow);
+                            if (idx < 0) { resetDrag(); return true; }
+                            parent.requestDisallowInterceptTouchEvent(true);
+                            if (idx < parent.getChildCount() - 1) {
+                                View next = parent.getChildAt(idx + 1);
+                                if (dragRow.getTop() + dy
+                                        > next.getTop() + next.getHeight() / 2f) {
+                                    startRawY += next.getHeight();
+                                    parent.removeViewAt(idx);
+                                    parent.addView(dragRow, idx + 1);
+                                    dragRow.setTranslationY(e.getRawY() - startRawY);
+                                    return true;
+                                }
+                            }
+                            if (idx > 0) {
+                                View prev = parent.getChildAt(idx - 1);
+                                if (dragRow.getTop() + dy
+                                        < prev.getTop() + prev.getHeight() / 2f) {
+                                    startRawY -= prev.getHeight();
+                                    parent.removeViewAt(idx);
+                                    parent.addView(dragRow, idx - 1);
+                                    dragRow.setTranslationY(e.getRawY() - startRawY);
+                                }
+                            }
+                            return true;
+                        }
+                        case MotionEvent.ACTION_UP:
+                        case MotionEvent.ACTION_CANCEL:
+                            if (dragRow != null) {
+                                dragRow.setTranslationY(0);
+                                dragRow.setAlpha(1f);
+                                dragRow.setBackgroundColor(0);
+                            }
+                            try { saveOrder(); } catch (Throwable ignored) {}
                             dragHost = null;
                             dragRow = null;
                             return true;
-                        }
-                        dragRow.setTranslationY(dy);
-                        int idx = parent.indexOfChild(dragRow);
-                        if (idx < 0) { dragHost = null; dragRow = null; return true; }
-                        parent.requestDisallowInterceptTouchEvent(true);
-                        if (idx < parent.getChildCount() - 1) {
-                            View next = parent.getChildAt(idx + 1);
-                            if (dragRow.getTop() + dy
-                                    > next.getTop() + next.getHeight() / 2f) {
-                                startRawY += next.getHeight();
-                                parent.removeViewAt(idx);
-                                parent.addView(dragRow, idx + 1);
-                                dragRow.setTranslationY(e.getRawY() - startRawY);
-                                return true;
-                            }
-                        }
-                        if (idx > 0) {
-                            View prev = parent.getChildAt(idx - 1);
-                            if (dragRow.getTop() + dy
-                                    < prev.getTop() + prev.getHeight() / 2f) {
-                                startRawY -= prev.getHeight();
-                                parent.removeViewAt(idx);
-                                parent.addView(dragRow, idx - 1);
-                                dragRow.setTranslationY(e.getRawY() - startRawY);
-                            }
-                        }
-                        return true;
                     }
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        if (dragRow != null) {
-                            dragRow.setTranslationY(0);
-                            dragRow.setAlpha(1f);
-                            dragRow.setBackgroundColor(0);
-                        }
-                        saveOrder();
-                        dragHost = null;
-                        dragRow = null;
-                        return true;
+                } catch (Throwable t) {
+                    // любая ошибка драга не должна ронять приложение
+                    resetDrag();
                 }
                 return false;
             }
@@ -744,36 +904,69 @@ public class MainActivity extends Activity {
         }
         row.addView(val);
         valueViews.put(host, val);
+
+        if (editMode) {
+            TextView ren = label("✎", 16, accent, false);
+            ren.setPadding(d(10), 0, d(10), 0);
+            ren.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { showRenameDialog(host); }
+            });
+            row.addView(ren);
+
+            TextView del = label("✕", 16, bad, false);
+            del.setPadding(d(10), 0, 0, 0);
+            del.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { showDeleteDialog(host); }
+            });
+            row.addView(del);
+        }
         return row;
     }
 
     private int colorFor(String host) {
         Integer code = resultCodes.get(host);
-        if (code == null || code <= 0) return bad;
-        if (code < 400) return good;
-        if (code < 500) return warn;
-        return bad;
+        if (code == null || code <= 0) return bad;      // недоступен
+        Integer ms = resultMs.get(host);
+        if (ms == null) return grey;
+        if (ms <= GOOD_MS) return good;                 // зелёный
+        if (ms <= WARN_MS) return warn;                 // жёлтый
+        return orange;                                  // оранжевый
     }
 
     private static String trendArrow(int t) {
         return t > 0 ? " ↑" : t < 0 ? " ↓" : " =";
     }
 
+    private boolean isCustom(String host) {
+        for (String[] s : customServices) if (s[1].equals(host)) return true;
+        return false;
+    }
+
     private boolean exists(String host) {
-        return HOST_NAME.containsKey(host);
+        return HOST_NAME.containsKey(host) || isCustom(host);
     }
 
     private String nameOf(String host) {
+        String r = renames.get(host);
+        if (r != null) return r;
         String n = HOST_NAME.get(host);
-        return n != null ? n : host;
+        if (n != null) return n;
+        for (String[] s : customServices) if (s[1].equals(host)) return s[0];
+        return host;
     }
 
     private boolean inCategory(String host, String cat) {
+        if (isCustom(host)) return cat.equals("Иные");
         return cat.equals(HOST_CAT.get(host));
     }
 
     private List<String> allHosts() {
-        return new ArrayList<String>(HOST_NAME.keySet());
+        List<String> l = new ArrayList<String>();
+        for (String[] s : SERVICES) {
+            if (!deleted.contains(s[1])) l.add(s[1]);
+        }
+        for (String[] s : customServices) l.add(s[1]);
+        return l;
     }
 
     private List<String> loadOrder(String key) {
@@ -789,6 +982,9 @@ public class MainActivity extends Activity {
         String cat = key.substring(4);
         for (String[] s : SERVICES)
             if (s[2].equals(cat) && !out.contains(s[1])) out.add(s[1]);
+        if (cat.equals("Иные"))
+            for (String[] s : customServices)
+                if (!out.contains(s[1])) out.add(s[1]);
         return out;
     }
 
@@ -815,6 +1011,66 @@ public class MainActivity extends Activity {
     private void saveStars() {
         prefs.edit()
                 .putStringSet("stars", new LinkedHashSet<String>(stars)).apply();
+    }
+
+    // разделители для хранения: record=\u001E, field=\u001F
+    private void loadCustom() {
+        customServices.clear();
+        String cs = prefs.getString("custom", "");
+        if (cs.length() > 0) {
+            for (String item : cs.split("\u001E")) {
+                String[] p = item.split("\u001F", 2);
+                if (p.length == 2 && p[1].length() > 0)
+                    customServices.add(new String[]{p[0], p[1]});
+            }
+        }
+        renames.clear();
+        String rn = prefs.getString("renames", "");
+        if (rn.length() > 0) {
+            for (String item : rn.split("\u001E")) {
+                String[] p = item.split("\u001F", 2);
+                if (p.length == 2 && p[1].length() > 0) renames.put(p[0], p[1]);
+            }
+        }
+        deleted.clear();
+        String dl = prefs.getString("deleted", "");
+        if (dl.length() > 0) {
+            for (String h : dl.split(",")) if (h.length() > 0) deleted.add(h);
+        }
+        collapsed.clear();
+        String cl = prefs.getString("collapsed", "");
+        if (cl.length() > 0) {
+            for (String c : cl.split(",")) if (c.length() > 0) collapsed.add(c);
+        }
+    }
+
+    private void saveCollapsed() {
+        StringBuilder sb = new StringBuilder();
+        for (String c : collapsed) { if (sb.length() > 0) sb.append(','); sb.append(c); }
+        prefs.edit().putString("collapsed", sb.toString()).apply();
+    }
+
+    private void saveCustom() {
+        StringBuilder cs = new StringBuilder();
+        for (String[] s : customServices) {
+            if (cs.length() > 0) cs.append('\u001E');
+            cs.append(s[0]).append('\u001F').append(s[1]);
+        }
+        StringBuilder rn = new StringBuilder();
+        for (Map.Entry<String, String> e : renames.entrySet()) {
+            if (rn.length() > 0) rn.append('\u001E');
+            rn.append(e.getKey()).append('\u001F').append(e.getValue());
+        }
+        StringBuilder dl = new StringBuilder();
+        for (String h : deleted) {
+            if (dl.length() > 0) dl.append(',');
+            dl.append(h);
+        }
+        prefs.edit()
+                .putString("custom", cs.toString())
+                .putString("renames", rn.toString())
+                .putString("deleted", dl.toString())
+                .apply();
     }
 
     private void refresh() {
@@ -956,6 +1212,10 @@ public class MainActivity extends Activity {
                         }
                         deepIpView.setText("Глубокий: " + deepIp);
                         deepIpView.setVisibility(View.VISIBLE);
+                        prefs.edit()
+                                .putString("deep_ip", deepIp)
+                                .putString("deep_country", fCountry)
+                                .apply();
                         if (fCountry.length() == 2) {
                             String name = COUNTRY_RU.containsKey(fCountry)
                                     ? COUNTRY_RU.get(fCountry) : fCountry;
@@ -999,13 +1259,9 @@ public class MainActivity extends Activity {
                                     int trend = prev < 0 ? 0
                                             : cr.ms > prev ? 1 : cr.ms < prev ? -1 : 0;
                                     prefs.edit().putInt("hist_" + host, cr.ms).apply();
-                                    if (cr.code < 400) {
-                                        resultTexts.put(host,
-                                                cr.ms + " мс" + trendArrow(trend));
-                                    } else {
-                                        resultTexts.put(host,
-                                                cr.code + " · " + cr.ms + " мс");
-                                    }
+                                    // у ответивших не показываем код — только время
+                                    resultTexts.put(host,
+                                            cr.ms + " мс" + trendArrow(trend));
                                 } else {
                                     resultCodes.put(host, 0);
                                     resultTexts.put(host, "недоступен");
@@ -1023,8 +1279,9 @@ public class MainActivity extends Activity {
                                         progress.setVisibility(View.GONE);
                                         btn.setEnabled(true);
                                         busy = false;
+                                        updateSummary();
                                         updateWidget();
-                                        checkNotifications();
+                                        updatePersistentNotification();
                                     }
                                 }
                             });
@@ -1049,7 +1306,11 @@ public class MainActivity extends Activity {
         if (speedBtn == null) return;
         speedBtn.setEnabled(false);
         speedResultView.setText("Измерение…");
+        upView.setText("");
+        jitView.setText("");
+        lossView.setText("");
         speedServerView.setText("");
+        if (gaugeView != null) { gaugeView.setMax(200); gaugeView.setSpeed(0); }
         pool.execute(new Runnable() {
             @Override public void run() {
                 long bestBytes = 0, bestNs = 0;
@@ -1060,24 +1321,94 @@ public class MainActivity extends Activity {
                         bestBytes = r[0]; bestNs = r[1]; bestName = hostOf(u);
                     }
                 }
-                final long fb = bestBytes, fn = bestNs;
+                final double dl = bestNs > 0 ? bestBytes * 8.0 / (bestNs / 1e9) / 1e6 : 0;
                 final String fname = bestName;
+
+                long[] up = uploadMeasure(SPEED_UPLOAD_URL, 4_000_000L, 6000);
+                final double ul = up != null && up[1] > 0
+                        ? up[0] * 8.0 / (up[1] / 1e9) / 1e6 : 0;
+
+                // джиттер и потери: 10 замеров времени соединения
+                int samples = 10;
+                long prev = -1, sumDiff = 0, diffs = 0;
+                int lost = 0;
+                for (int i = 0; i < samples; i++) {
+                    Long t = tcpTime("google.com");
+                    if (t == null) { lost++; continue; }
+                    if (prev >= 0) { sumDiff += Math.abs(t - prev); diffs++; }
+                    prev = t;
+                }
+                final double jitter = diffs > 0 ? (double) sumDiff / diffs : 0;
+                final int loss = (int) Math.round(lost * 100.0 / samples);
+
                 ui.post(new Runnable() {
                     @Override public void run() {
-                        if (fb > 0 && fn > 0) {
-                            double mbps = fb * 8.0 / (fn / 1e9) / 1e6;
+                        if (dl > 0) {
                             speedResultView.setText(
-                                    String.format(Locale.US, "↓ %.1f Мбит/с", mbps));
-                            speedServerView.setText(fname);
+                                    String.format(Locale.US, "↓ %.1f Мбит/с", dl));
+                            prefs.edit().putString("last_speed",
+                                    String.format(Locale.US, "↓ %.1f Мбит/с", dl)).apply();
+                            updatePersistentNotification();
                         } else {
                             speedResultView.setText("не удалось замерить");
-                            speedServerView.setText("");
                         }
+                        if (gaugeView != null) gaugeView.setSpeed(dl);
+                        upView.setText(ul > 0
+                                ? String.format(Locale.US, "↑ %.1f Мбит/с", ul) : "—");
+                        jitView.setText(String.format(Locale.US, "Джиттер: %.1f мс", jitter));
+                        lossView.setText("Потери: " + loss + "%");
+                        speedServerView.setText(fname);
                         speedBtn.setEnabled(true);
                     }
                 });
             }
         });
+    }
+
+    private static Long tcpTime(String host) {
+        long t0 = System.nanoTime();
+        Socket s = null;
+        try {
+            s = new Socket();
+            s.connect(new InetSocketAddress(host, 443), 2000);
+            return (System.nanoTime() - t0) / 1_000_000;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            try { if (s != null) s.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    private static long[] uploadMeasure(String u, long maxBytes, int timeoutMs) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(u).openConnection();
+            c.setConnectTimeout(3000);
+            c.setReadTimeout(timeoutMs);
+            c.setDoOutput(true);
+            c.setRequestMethod("POST");
+            c.setFixedLengthStreamingMode(maxBytes);
+            c.setRequestProperty("User-Agent",
+                    "Mozilla/5.0 (Linux; Android 13) CheckConnection/1.12.6");
+            long t0 = System.nanoTime();
+            OutputStream os = c.getOutputStream();
+            byte[] buf = new byte[8192];
+            java.util.Arrays.fill(buf, (byte) 'x');
+            long total = 0;
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            while (total < maxBytes && System.currentTimeMillis() < deadline) {
+                int n = (int) Math.min(buf.length, maxBytes - total);
+                os.write(buf, 0, n);
+                total += n;
+            }
+            os.close();
+            c.getResponseCode();
+            return new long[]{total, System.nanoTime() - t0};
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (c != null) c.disconnect();
+        }
     }
 
     private static String hostOf(String u) {
@@ -1126,6 +1457,7 @@ public class MainActivity extends Activity {
         }
         notifyBtn.setText(notifOn ? "Уведомления ✓" : "Уведомления");
         notifyBtn.setTextColor(notifOn ? accent : grey);
+        updatePersistentNotification();
     }
 
     private void ensureChannel() {
@@ -1133,64 +1465,191 @@ public class MainActivity extends Activity {
             NotificationManager nm =
                     (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             NotificationChannel ch = new NotificationChannel(NOTIF_CHANNEL,
-                    "Статус", NotificationManager.IMPORTANCE_DEFAULT);
-            ch.setDescription("Изменения доступности сервисов");
+                    "Статус", NotificationManager.IMPORTANCE_MIN);
+            ch.setDescription("Постоянный статус: скорость и IP");
+            ch.setSound(null, null);
             nm.createNotificationChannel(ch);
         }
     }
 
-    private void notifyChange(String title, String text) {
-        if (!notifOn) return;
+    // постоянное тихое закреплённое уведомление: скорость + глубокий IP со страной
+    private void updatePersistentNotification() {
         NotificationManager nm =
                 (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (!notifOn) { nm.cancel(1); return; }
+        ensureChannel();
+        StringBuilder text = new StringBuilder();
+        String ip = prefs.getString("deep_ip", "");
+        if (ip.length() > 0) {
+            text.append("IP: ").append(ip);
+            String cc = prefs.getString("deep_country", "");
+            if (cc.length() > 0) text.append(" (").append(countryName(cc)).append(")");
+        }
+        String sp = prefs.getString("last_speed", "");
+        if (sp.length() > 0) {
+            if (text.length() > 0) text.append('\n');
+            text.append(sp);
+        }
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= 26) {
             b = new Notification.Builder(this, NOTIF_CHANNEL);
         } else {
             b = new Notification.Builder(this);
+            b.setPriority(Notification.PRIORITY_MIN);
         }
         b.setSmallIcon(R.mipmap.ic_launcher_0)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setAutoCancel(true);
-        nm.notify((int) System.currentTimeMillis(), b.build());
+                .setContentTitle("Check Connection")
+                .setContentText(text.length() > 0 ? text.toString() : "…")
+                .setStyle(new Notification.BigTextStyle().bigText(text.toString()))
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false);
+        nm.notify(1, b.build());
     }
 
-    private void checkNotifications() {
-        if (!notifOn) return;
-        Set<String> prev = new HashSet<String>(
-                prefs.getStringSet("down", new HashSet<String>()));
-        Set<String> now = new HashSet<String>();
+    private static String countryName(String cc) {
+        String n = COUNTRY_RU.get(cc);
+        return n != null ? n : cc;
+    }
+
+
+    // ===== управление сервисами =====
+    private void showRenameDialog(final String host) {
+        final EditText input = new EditText(this);
+        input.setText(nameOf(host));
+        input.setTextColor(text);
+        input.setHintTextColor(grey);
+        input.setSingleLine(true);
+        input.setSelection(input.getText().length());
+        new AlertDialog.Builder(this)
+                .setTitle("Название для " + host)
+                .setView(input)
+                .setPositiveButton("Сохранить", new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int w) {
+                        String v = input.getText().toString().trim();
+                        if (v.length() > 0) renames.put(host, v);
+                        else renames.remove(host);
+                        saveCustom();
+                        renderLists();
+                    }
+                })
+                .setNegativeButton("Отмена", null)
+                .show();
+    }
+
+    private void showAddDialog() {
+        final EditText nameInput = new EditText(this);
+        nameInput.setHint("Название");
+        nameInput.setTextColor(text);
+        nameInput.setHintTextColor(grey);
+        nameInput.setSingleLine(true);
+
+        final EditText hostInput = new EditText(this);
+        hostInput.setHint("Адрес (example.com)");
+        hostInput.setTextColor(text);
+        hostInput.setHintTextColor(grey);
+        hostInput.setSingleLine(true);
+        hostInput.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(d(20), d(8), d(20), 0);
+        box.addView(nameInput);
+        box.addView(hostInput);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Добавить сайт")
+                .setView(box)
+                .setPositiveButton("Добавить", new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int w) {
+                        String nm = nameInput.getText().toString().trim();
+                        String hs = hostInput.getText().toString().trim().toLowerCase();
+                        if (hs.length() > 0) {
+                            if (nm.length() == 0) nm = hs;
+                            customServices.add(new String[]{nm, hs});
+                            saveCustom();
+                            renderLists();
+                        }
+                    }
+                })
+                .setNegativeButton("Отмена", null)
+                .show();
+    }
+
+    private void showDeleteDialog(final String host) {
+        new AlertDialog.Builder(this)
+                .setTitle("Удалить?")
+                .setMessage("Точно хотите удалить " + nameOf(host) + " • " + host + "?")
+                .setPositiveButton("Удалить", new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int w) {
+                        if (isCustom(host)) {
+                            for (int i = 0; i < customServices.size(); i++)
+                                if (customServices.get(i)[1].equals(host))
+                                    customServices.remove(i);
+                        } else {
+                            deleted.add(host);
+                        }
+                        stars.remove(host);
+                        saveCustom();
+                        saveStars();
+                        renderLists();
+                    }
+                })
+                .setNegativeButton("Отмена", null)
+                .show();
+    }
+
+    // ===== сводка и экспорт =====
+    private void updateSummary() {
+        if (summaryView == null) return;
+        int green = 0, yellow = 0, red = 0;
         for (String h : allHosts()) {
             Integer code = resultCodes.get(h);
-            if (code == null || code <= 0 || code >= 400) now.add(h);
+            if (code == null || code <= 0) { red++; continue; }
+            Integer ms = resultMs.get(h);
+            if (ms != null && ms <= GOOD_MS) green++; else yellow++;
         }
-        StringBuilder down = new StringBuilder(), up = new StringBuilder();
-        for (String h : now) if (!prev.contains(h)) down.append(nameOf(h)).append(", ");
-        for (String h : prev) if (!now.contains(h)) up.append(nameOf(h)).append(", ");
-        if (down.length() > 0)
-            notifyChange("Недоступно", trimList(down.toString()));
-        if (up.length() > 0)
-            notifyChange("Снова доступно", trimList(up.toString()));
-        prefs.edit().putStringSet("down", now).apply();
+        summaryView.setText("Всего " + allHosts().size() + " · быстрых " + green
+                + " · средних " + yellow + " · недоступно " + red);
     }
 
-    private static String trimList(String s) {
-        return s.length() > 1 ? s.substring(0, s.length() - 2) : s;
+    private void shareResults() {
+        StringBuilder sb = new StringBuilder("Check Connection\n");
+        String ip = prefs.getString("deep_ip", "");
+        if (ip.length() > 0) {
+            sb.append("IP: ").append(ip);
+            String cc = prefs.getString("deep_country", "");
+            if (cc.length() > 0) sb.append(" (").append(countryName(cc)).append(")");
+            sb.append('\n');
+        }
+        for (String cat : CATEGORIES) {
+            for (String h : loadOrder("cat_" + cat)) {
+                if (stars.contains(h) || !inCategory(h, cat)) continue;
+                String t = resultTexts.get(h);
+                if (t == null) continue;
+                sb.append(nameOf(h)).append(" — ").append(t).append('\n');
+            }
+        }
+        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        cm.setPrimaryClip(ClipData.newPlainText("Check Connection", sb.toString()));
+        Toast.makeText(this, "Скопировано в буфер обмена", Toast.LENGTH_SHORT).show();
     }
 
     // ===== виджет =====
     private void updateWidget() {
-        int total = allHosts().size();
-        int ok = 0;
+        int green = 0, yellow = 0, red = 0;
         for (String h : allHosts()) {
             Integer code = resultCodes.get(h);
-            if (code != null && code > 0 && code < 400) ok++;
+            if (code == null || code <= 0) { red++; continue; }   // недоступен
+            Integer ms = resultMs.get(h);
+            if (ms != null && ms <= GOOD_MS) green++;
+            else yellow++;
         }
-        String status = "✓ " + ok + "/" + total + " доступно";
         String time = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
         prefs.edit()
-                .putString("w_status", status)
+                .putString("w_g", "● " + green + " быстрых")
+                .putString("w_y", "● " + yellow + " средних")
+                .putString("w_r", "● " + red + " недоступно")
                 .putString("w_time", "обновлено " + time)
                 .apply();
         StatusWidget.push(this);
