@@ -1,7 +1,9 @@
 package com.qawai.vpncheck;
 
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -248,6 +250,7 @@ public class MainActivity extends Activity {
         themeIdx = prefs.getInt("theme", 0);
         stars = new HashSet<String>(prefs.getStringSet("stars", new HashSet<String>()));
         applyTheme();
+        applyThemeIcon();
         buildUi();
         renderLists();
     }
@@ -270,6 +273,29 @@ public class MainActivity extends Activity {
         int[] t = THEMES[themeIdx];
         bg = t[0]; text = t[1]; accent = t[2]; grey = t[3];
         good = t[4]; warn = t[5]; bad = t[6];
+    }
+
+    // иконка приложения меняется под выбранную тему (переключаем activity-alias)
+    private void applyThemeIcon() {
+        try {
+            PackageManager pm = getPackageManager();
+            String pkg = getPackageName();
+            // сначала включаем нужную, потом выключаем остальные,
+            // чтобы иконка в лаунчере не "пропадала" на мгновение
+            pm.setComponentEnabledSetting(
+                    new ComponentName(pkg, pkg + ".MainActivityTheme" + themeIdx),
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP);
+            for (int i = 0; i < THEME_NAMES.length; i++) {
+                if (i == themeIdx) continue;
+                pm.setComponentEnabledSetting(
+                        new ComponentName(pkg, pkg + ".MainActivityTheme" + i),
+                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                        PackageManager.DONT_KILL_APP);
+            }
+        } catch (Exception e) {
+            // часть оболочек не поддерживает смену иконки на лету
+        }
     }
 
     private int d(int v) { return Math.round(v * dp); }
@@ -295,7 +321,7 @@ public class MainActivity extends Activity {
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.addView(label("Check Connect", 24, accent, true));
-        head.addView(label("  v1.9", 12, grey, false));
+        head.addView(label("  v1.10", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -404,6 +430,7 @@ public class MainActivity extends Activity {
                 @Override public void onClick(View v) {
                     themeIdx = idx;
                     prefs.edit().putInt("theme", idx).apply();
+                    applyThemeIcon();
                     if (popup != null) popup.dismiss();
                     recreate();
                 }

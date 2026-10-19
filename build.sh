@@ -5,11 +5,12 @@ cd "$HOME/apkbuild"
 rm -rf classes dex app-unsigned.apk
 mkdir -p classes dex
 
-echo "[1/6] иконка..."
-if [ ! -f res/mipmap/ic_launcher.png ]; then
+echo "[1/6] иконки (по темам)..."
+if [ ! -f res/mipmap/ic_launcher_7.png ]; then
   javac -d . IconGen.java 2>/dev/null
-  java -cp . IconGen res/mipmap/ic_launcher.png
+  java -cp . IconGen res/mipmap
 fi
+rm -f res/mipmap/ic_launcher.png
 
 echo "[2/6] javac..."
 javac -source 1.8 -target 1.8 -classpath android.jar \
