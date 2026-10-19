@@ -390,7 +390,7 @@ public class MainActivity extends Activity {
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.addView(label("Check Connection", 24, accent, true));
-        head.addView(label("  v1.12", 12, grey, false));
+        head.addView(label("  v1.12.1", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -999,8 +999,13 @@ public class MainActivity extends Activity {
                                     int trend = prev < 0 ? 0
                                             : cr.ms > prev ? 1 : cr.ms < prev ? -1 : 0;
                                     prefs.edit().putInt("hist_" + host, cr.ms).apply();
-                                    resultTexts.put(host, cr.ms + " мс · " + cr.code
-                                            + trendArrow(trend));
+                                    if (cr.code < 400) {
+                                        resultTexts.put(host,
+                                                cr.ms + " мс" + trendArrow(trend));
+                                    } else {
+                                        resultTexts.put(host,
+                                                cr.code + " · " + cr.ms + " мс");
+                                    }
                                 } else {
                                     resultCodes.put(host, 0);
                                     resultTexts.put(host, "недоступен");
