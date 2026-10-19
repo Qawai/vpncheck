@@ -1,19 +1,27 @@
 package com.qawai.vpncheck;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.net.ConnectivityManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.ProgressBar;
@@ -203,10 +211,6 @@ public class MainActivity extends Activity {
              0xFF8FD6BD, 0xFFD6C56F, 0xFFE08A8A}
     };
 
-    // пороги пинга: до 500 мс — зелёная зона, до 1800 — жёлтая, дальше красная
-    private static final int GOOD_MS = 500;
-    private static final int WARN_MS = 1800;
-
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService pool = Executors.newFixedThreadPool(10);
     private final Runnable autoRefresh = new Runnable() {
@@ -228,6 +232,16 @@ public class MainActivity extends Activity {
             new ConcurrentHashMap<String, String>();
     private final Map<String, Integer> resultMs =
             new ConcurrentHashMap<String, Integer>();
+    private final Map<String, Integer> resultCodes =
+            new ConcurrentHashMap<String, Integer>();
+
+    private EditText searchView;
+    private String query = "";
+    private final BroadcastReceiver netReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (!busy) refresh();
+        }
+    };
 
     private Set<String> stars = new HashSet<String>();
     private boolean busy;
@@ -258,6 +272,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        try {
+            registerReceiver(netReceiver,
+                    new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+        } catch (Exception ignored) {}
         refresh();
         ui.removeCallbacks(autoRefresh);
         ui.postDelayed(autoRefresh, 45000);
@@ -267,6 +285,7 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         ui.removeCallbacks(autoRefresh);
+        try { unregisterReceiver(netReceiver); } catch (Exception ignored) {}
     }
 
     private void applyTheme() {
@@ -320,8 +339,8 @@ public class MainActivity extends Activity {
 
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
-        head.addView(label("Check Connect", 24, accent, true));
-        head.addView(label("  v1.10", 12, grey, false));
+        head.addView(label("Check Connection", 24, accent, true));
+        head.addView(label("  v1.11", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -376,6 +395,23 @@ public class MainActivity extends Activity {
         root.addView(progress, pp);
 
         root.addView(label("Пинг сервисов", 17, accent, true));
+
+        searchView = new EditText(this);
+        searchView.setHint("Поиск сервиса…");
+        searchView.setTextColor(text);
+        searchView.setHintTextColor(grey);
+        searchView.setSingleLine(true);
+        searchView.setBackground(null);
+        searchView.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) {
+                query = s.toString().trim().toLowerCase();
+                renderLists();
+            }
+        });
+        root.addView(searchView);
+
         root.addView(label("тап — закрепить ★ · удержание — перетащить",
                 12, grey, false));
 
@@ -451,9 +487,10 @@ public class MainActivity extends Activity {
 
         List<String> pinned = loadOrder("pinned");
         List<String> visPinned = new ArrayList<String>();
-        for (String h : pinned) if (stars.contains(h) && exists(h)) visPinned.add(h);
-        for (String h : allHosts()) if (stars.contains(h) && !visPinned.contains(h))
+        for (String h : pinned) if (stars.contains(h) && exists(h) && matches(h))
             visPinned.add(h);
+        for (String h : allHosts()) if (stars.contains(h) && matches(h)
+                && !visPinned.contains(h)) visPinned.add(h);
 
         if (!visPinned.isEmpty()) {
             listRoot.addView(sectionHeader("★ Закреплённые"));
@@ -466,13 +503,19 @@ public class MainActivity extends Activity {
             LinearLayout cont = catContainers.get(cat);
             cont.removeAllViews();
             for (String h : loadOrder("cat_" + cat)) {
-                if (stars.contains(h) || !inCategory(h, cat)) continue;
+                if (stars.contains(h) || !inCategory(h, cat) || !matches(h)) continue;
                 cont.addView(createRow(h));
             }
             if (cont.getChildCount() == 0) continue;
             listRoot.addView(sectionHeader(cat));
             listRoot.addView(cont);
         }
+    }
+
+    private boolean matches(String host) {
+        if (query == null || query.isEmpty()) return true;
+        return nameOf(host).toLowerCase().contains(query)
+                || host.toLowerCase().contains(query);
     }
 
     private TextView sectionHeader(String title) {
@@ -587,9 +630,15 @@ public class MainActivity extends Activity {
     }
 
     private int colorFor(String host) {
-        Integer ms = resultMs.get(host);
-        if (ms == null) return bad;
-        return ms <= GOOD_MS ? good : ms <= WARN_MS ? warn : bad;
+        Integer code = resultCodes.get(host);
+        if (code == null || code <= 0) return bad;
+        if (code < 400) return good;
+        if (code < 500) return warn;
+        return bad;
+    }
+
+    private static String trendArrow(int t) {
+        return t > 0 ? " ↑" : t < 0 ? " ↓" : " =";
     }
 
     private boolean exists(String host) {
@@ -657,6 +706,7 @@ public class MainActivity extends Activity {
         progress.setVisibility(View.VISIBLE);
         resultTexts.clear();
         resultMs.clear();
+        resultCodes.clear();
         for (TextView v : valueViews.values()) {
             v.setText("…");
             v.setTextColor(grey);
@@ -822,12 +872,19 @@ public class MainActivity extends Activity {
                 for (final String host : hosts) {
                     pool.execute(new Runnable() {
                         @Override public void run() {
-                            Integer v = httpCheck(host);
+                            CheckResult cr = httpCheck(host);
                             synchronized (resultMs) {
-                                if (v != null) {
-                                    resultMs.put(host, v);
-                                    resultTexts.put(host, v + " мс");
+                                if (cr != null) {
+                                    int prev = prefs.getInt("hist_" + host, -1);
+                                    resultMs.put(host, cr.ms);
+                                    resultCodes.put(host, cr.code);
+                                    int trend = prev < 0 ? 0
+                                            : cr.ms > prev ? 1 : cr.ms < prev ? -1 : 0;
+                                    prefs.edit().putInt("hist_" + host, cr.ms).apply();
+                                    resultTexts.put(host, cr.ms + " мс · " + cr.code
+                                            + trendArrow(trend));
                                 } else {
+                                    resultCodes.put(host, 0);
                                     resultTexts.put(host, "недоступен");
                                 }
                             }
@@ -907,23 +964,39 @@ public class MainActivity extends Activity {
     }
 
     // настоящий HTTPS-запрос: время = DNS + TCP + TLS + ответ сервера.
-    // Если сервер не ответил за таймаут или соединение сорвалось -> недоступен.
-    private static Integer httpCheck(String host) {
+    // Редиректы следуем вручную с лимитом (у части сайтов они зациклены).
+    // Возвращает код ответа и время; null — если сервер не ответил.
+    private static CheckResult httpCheck(String host) {
         long t0 = System.nanoTime();
+        URL url = null;
         HttpURLConnection c = null;
         try {
-            c = (HttpURLConnection)
-                    new URL("https://" + host + "/").openConnection();
-            c.setConnectTimeout(5000);
-            c.setReadTimeout(5000);
-            c.setRequestMethod("GET");
-            c.setInstanceFollowRedirects(false);
-            c.setRequestProperty("User-Agent",
-                    "Mozilla/5.0 (Linux; Android 13) VPNCheck/1.8");
-            c.setRequestProperty("Accept", "*/*");
-            // любой ответ сервера (даже 3xx/4xx) = сервис доступен.
-            // редиректы не следуем: у части сайтов они зациклены/ведут на заблокированный домен.
-            int code = c.getResponseCode();
+            url = new URL("https://" + host + "/");
+            int redirects = 0;
+            int code;
+            while (true) {
+                c = (HttpURLConnection) url.openConnection();
+                c.setConnectTimeout(5000);
+                c.setReadTimeout(5000);
+                c.setRequestMethod("GET");
+                c.setInstanceFollowRedirects(false);
+                c.setRequestProperty("User-Agent",
+                        "Mozilla/5.0 (Linux; Android 13) VPNCheck/1.11");
+                c.setRequestProperty("Accept", "*/*");
+                code = c.getResponseCode();
+                if (code == 301 || code == 302 || code == 303
+                        || code == 307 || code == 308) {
+                    if (redirects >= 3) break;
+                    String loc = c.getHeaderField("Location");
+                    c.disconnect();
+                    c = null;
+                    if (loc == null) break;
+                    url = new URL(url, loc);
+                    redirects++;
+                    continue;
+                }
+                break;
+            }
             if (code <= 0) return null;
             int ms = (int) ((System.nanoTime() - t0) / 1000000);
             InputStream in = (code >= 400) ? c.getErrorStream() : c.getInputStream();
@@ -932,11 +1005,17 @@ public class MainActivity extends Activity {
                 in.read(buf);
                 in.close();
             }
-            return ms;
+            return new CheckResult(code, ms);
         } catch (Exception e) {
             return null;
         } finally {
             if (c != null) c.disconnect();
         }
+    }
+
+    private static class CheckResult {
+        final int code;
+        final int ms;
+        CheckResult(int code, int ms) { this.code = code; this.ms = ms; }
     }
 }

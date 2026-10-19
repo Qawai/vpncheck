@@ -1,13 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.qawai.vpncheck"
-    android:versionCode="10"
-    android:versionName="1.10">
+    android:versionCode="11"
+    android:versionName="1.11">
 
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
     <application
-        android:label="Check Connect"
+        android:label="Check Connection"
         android:icon="@mipmap/ic_launcher_0"
         android:theme="@android:style/Theme.Black.NoTitleBar">
 
@@ -23,7 +24,7 @@
             android:enabled="true"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_0"
-            android:label="Check Connect">
+            android:label="Check Connection">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -35,7 +36,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_1"
-            android:label="Check Connect">
+            android:label="Check Connection">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -47,7 +48,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_2"
-            android:label="Check Connect">
+            android:label="Check Connection">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -59,7 +60,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_3"
-            android:label="Check Connect">
+            android:label="Check Connection">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -71,7 +72,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_4"
-            android:label="Check Connect">
+            android:label="Check Connection">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -83,7 +84,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_5"
-            android:label="Check Connect">
+            android:label="Check Connection">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -95,7 +96,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_6"
-            android:label="Check Connect">
+            android:label="Check Connection">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -107,7 +108,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_7"
-            android:label="Check Connect">
+            android:label="Check Connection">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>

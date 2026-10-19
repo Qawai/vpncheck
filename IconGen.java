@@ -5,12 +5,13 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.GeneralPath;
+import java.awt.geom.Line2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.File;
 
-// Генерирует 8 иконок, окрашенных под каждую тему приложения.
-// Палитры совпадают с THEMES в MainActivity: bg, text, accent, grey, good, warn, bad.
+// Иконка-спидометр: шкала с зелёной зоной и стрелкой (явная геометрия).
+// Расцветка — из палитры каждой темы (bg, accent, good).
 public class IconGen {
 
     static final int[][] THEMES = {
@@ -24,8 +25,20 @@ public class IconGen {
             {0xFF1B2422, 0xFFDDEAE5, 0xFF8FD6BD, 0xFF8FA39C, 0xFF8FD6BD, 0xFFD6C56F, 0xFFE08A8A}
     };
 
-    static int[] unpack(int c) {
-        return new int[]{(c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF};
+    // точка верхней дуги: theta=0 справа, 90 сверху, 180 слева
+    static float[] pt(float cx, float cy, float r, double thetaDeg) {
+        double a = Math.toRadians(thetaDeg);
+        return new float[]{(float) (cx + r * Math.cos(a)), (float) (cy - r * Math.sin(a))};
+    }
+
+    static GeneralPath arcPath(float cx, float cy, float r, double from, double to) {
+        GeneralPath p = new GeneralPath();
+        for (double a = from; a <= to + 0.001; a += 3) {
+            float[] q = pt(cx, cy, r, a);
+            if (a == from) p.moveTo(q[0], q[1]);
+            else p.lineTo(q[0], q[1]);
+        }
+        return p;
     }
 
     static BufferedImage icon(int s, int bgC, int accentC, int goodC) {
@@ -34,59 +47,51 @@ public class IconGen {
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
 
-        // фон — цвет темы
         Color bg = new Color(bgC, true);
-        // акцент темы
         Color accent = new Color(accentC, true);
         Color good = new Color(goodC, true);
 
         float pad = s * 0.03f;
         float r = s * 0.24f;
-        RoundRectangle2D.Float bgRect =
+        RoundRectangle2D.Float rect =
                 new RoundRectangle2D.Float(pad, pad, s - 2 * pad, s - 2 * pad, r, r);
         g.setColor(bg);
-        g.fill(bgRect);
-
-        // окантовка акцентным цветом
+        g.fill(rect);
         g.setColor(accent);
-        g.setStroke(new BasicStroke(s * 0.022f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.draw(bgRect);
+        g.setStroke(new BasicStroke(s * 0.02f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.draw(rect);
 
-        float cx = s * 0.46f, cy = s * 0.46f;
-        float R = s * 0.28f;
+        float cx = s * 0.5f, cy = s * 0.62f;
+        float R = s * 0.30f;
 
-        // глобус акцентным цветом
+        // шкала (верхняя полуокружность)
+        g.setColor(accent);
+        g.setStroke(new BasicStroke(s * 0.05f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.draw(arcPath(cx, cy, R, 0, 180));
+
+        // зелёная зона (правый сектор)
+        g.setColor(good);
+        g.draw(arcPath(cx, cy, R, 0, 50));
+
+        // засечки
+        g.setStroke(new BasicStroke(s * 0.016f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        for (double t : new double[]{0, 45, 90, 135, 180}) {
+            float[] a = pt(cx, cy, R + s * 0.04f, t);
+            float[] b = pt(cx, cy, R + s * 0.08f, t);
+            g.draw(new Line2D.Float(a[0], a[1], b[0], b[1]));
+        }
+
+        // стрелка в зелёную зону
+        double na = Math.toRadians(28);
+        float len = R * 0.82f;
         g.setColor(accent);
         g.setStroke(new BasicStroke(s * 0.032f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.draw(new Ellipse2D.Float(cx - R, cy - R, R * 2, R * 2));
+        g.draw(new Line2D.Float(cx, cy,
+                (float) (cx + len * Math.cos(na)),
+                (float) (cy - len * Math.sin(na))));
 
-        g.setStroke(new BasicStroke(s * 0.024f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.draw(new Ellipse2D.Float(cx - R * 0.45f, cy - R, R * 0.9f, R * 2));
-        g.draw(new java.awt.geom.Line2D.Float(cx - R, cy - R * 0.35f, cx + R, cy - R * 0.35f));
-        g.draw(new java.awt.geom.Line2D.Float(cx - R, cy + R * 0.35f, cx + R, cy + R * 0.35f));
-
-        // бейдж
-        float br = s * 0.135f;
-        float bx = s * 0.70f, by = s * 0.70f;
-        int[] dark = {0x12, 0x1A, 0x18};
-        g.setColor(new Color(dark[0], dark[1], dark[2]));
-        g.fill(new Ellipse2D.Float(bx - br, by - br, br * 2, br * 2));
-        g.setColor(good);
-        g.fill(new Ellipse2D.Float(bx - br * 0.72f, by - br * 0.72f, br * 1.44f, br * 1.44f));
-
-        // стрелка вверх
-        GeneralPath arrow = new GeneralPath();
-        float w = br * 0.45f;
-        arrow.moveTo(bx, by - br * 0.34f);
-        arrow.lineTo(bx + w, by - br * 0.02f);
-        arrow.lineTo(bx + w * 0.45f, by - br * 0.02f);
-        arrow.lineTo(bx + w * 0.45f, by + br * 0.34f);
-        arrow.lineTo(bx - w * 0.45f, by + br * 0.34f);
-        arrow.lineTo(bx - w * 0.45f, by - br * 0.02f);
-        arrow.lineTo(bx - w, by - br * 0.02f);
-        arrow.closePath();
-        g.setColor(new Color(dark[0], dark[1], dark[2]));
-        g.fill(arrow);
+        // центр стрелки
+        g.fill(new Ellipse2D.Float(cx - s * 0.045f, cy - s * 0.045f, s * 0.09f, s * 0.09f));
 
         g.dispose();
         return img;
