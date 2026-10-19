@@ -419,6 +419,22 @@ public class MainActivity extends Activity {
         v.setBackground(gd);
     }
 
+    // параметры ячейки кнопки: равная ширина в строке
+    private LinearLayout.LayoutParams cellParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        lp.setMargins(d(4), d(4), d(4), d(4));
+        return lp;
+    }
+
+    // залитая акцентным цветом кнопка (для главного действия)
+    private GradientDrawable solidAccent() {
+        GradientDrawable gd = new GradientDrawable();
+        gd.setColor(accent);
+        gd.setCornerRadius(d(12));
+        return gd;
+    }
+
     private void buildUi() {
         final ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(bg);
@@ -429,9 +445,8 @@ public class MainActivity extends Activity {
         scroll.addView(root);
 
         LinearLayout head = new LinearLayout(this);
-        head.setOrientation(LinearLayout.HORIZONTAL);
         head.addView(label("Check Connection", 24, accent, true));
-        head.addView(label("  v2.0.1", 12, grey, false));
+        head.addView(label("  v2.0.2", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -466,65 +481,68 @@ public class MainActivity extends Activity {
         infoView.setPadding(0, d(2), 0, 0);
         root.addView(infoView);
 
-        LinearLayout controls = new LinearLayout(this);
-        controls.setOrientation(LinearLayout.HORIZONTAL);
-        controls.setPadding(0, d(14), 0, 0);
+        LinearLayout row1 = new LinearLayout(this);
+        row1.setPadding(0, d(14), 0, 0);
 
         btn = new TextView(this);
         btn.setText("Обновить");
         btn.setTextSize(15);
         btn.setTextColor(accent);
-        btn.setPadding(d(16), d(12), d(16), d(12));
+        btn.setGravity(Gravity.CENTER);
+        btn.setPadding(d(10), d(12), d(10), d(12));
         styleButton(btn);
         btn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { refresh(); }
         });
-        controls.addView(btn);
+        row1.addView(btn, cellParams());
 
         themeBtn = new TextView(this);
         themeBtn.setText(THEME_NAMES[themeIdx] + "  ▾");
         themeBtn.setTextColor(accent);
         themeBtn.setTextSize(15);
-        themeBtn.setPadding(d(16), d(12), d(16), d(12));
+        themeBtn.setGravity(Gravity.CENTER);
+        themeBtn.setPadding(d(10), d(12), d(10), d(12));
         styleButton(themeBtn);
         themeBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showThemeMenu(v); }
         });
-        controls.addView(themeBtn);
+        row1.addView(themeBtn, cellParams());
 
         notifyBtn = new TextView(this);
         notifyBtn.setText(notifOn ? "Уведомления ✓" : "Уведомления");
         notifyBtn.setTextColor(notifOn ? accent : grey);
         notifyBtn.setTextSize(14);
-        notifyBtn.setPadding(d(16), d(12), d(16), d(12));
+        notifyBtn.setGravity(Gravity.CENTER);
+        notifyBtn.setPadding(d(10), d(12), d(10), d(12));
         styleButton(notifyBtn);
         notifyBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { toggleNotifications(); }
         });
-        controls.addView(notifyBtn);
+        row1.addView(notifyBtn, cellParams());
+
+        root.addView(row1);
+
+        LinearLayout row2 = new LinearLayout(this);
+        row2.setPadding(0, d(4), 0, 0);
 
         shareBtn = new TextView(this);
         shareBtn.setText("Поделиться");
         shareBtn.setTextColor(accent);
         shareBtn.setTextSize(14);
-        shareBtn.setPadding(d(16), d(12), d(16), d(12));
+        shareBtn.setGravity(Gravity.CENTER);
+        shareBtn.setPadding(d(10), d(12), d(10), d(12));
         styleButton(shareBtn);
         shareBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { shareResults(); }
         });
-        controls.addView(shareBtn);
-
-        root.addView(controls);
-
-        LinearLayout controls2 = new LinearLayout(this);
-        controls2.setOrientation(LinearLayout.HORIZONTAL);
-        controls2.setPadding(0, d(8), 0, 0);
+        row2.addView(shareBtn, cellParams());
 
         manageBtn = new TextView(this);
         manageBtn.setText(editMode ? "Готово" : "Управление");
         manageBtn.setTextColor(accent);
         manageBtn.setTextSize(14);
-        manageBtn.setPadding(d(16), d(10), d(16), d(10));
+        manageBtn.setGravity(Gravity.CENTER);
+        manageBtn.setPadding(d(10), d(12), d(10), d(12));
         styleButton(manageBtn);
         manageBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
@@ -533,20 +551,21 @@ public class MainActivity extends Activity {
                 renderLists();
             }
         });
-        controls2.addView(manageBtn);
+        row2.addView(manageBtn, cellParams());
 
         addBtn = new TextView(this);
         addBtn.setText("+ Добавить сайт");
         addBtn.setTextColor(accent);
         addBtn.setTextSize(14);
-        addBtn.setPadding(d(16), d(10), d(16), d(10));
+        addBtn.setGravity(Gravity.CENTER);
+        addBtn.setPadding(d(10), d(12), d(10), d(12));
         styleButton(addBtn);
         addBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showAddDialog(); }
         });
-        controls2.addView(addBtn);
+        row2.addView(addBtn, cellParams());
 
-        root.addView(controls2);
+        root.addView(row2);
 
         progress = new ProgressBar(this);
         progress.setIndeterminate(true);
@@ -558,7 +577,6 @@ public class MainActivity extends Activity {
 
         // вкладки
         LinearLayout tabs = new LinearLayout(this);
-        tabs.setOrientation(LinearLayout.HORIZONTAL);
         tabs.setPadding(0, d(10), 0, 0);
         tabAvail = new TextView(this);
         tabAvail.setText("Доступность");
@@ -618,45 +636,54 @@ public class MainActivity extends Activity {
         speedContainer.setOrientation(LinearLayout.VERTICAL);
         speedContainer.setVisibility(View.GONE);
 
+        speedBtn = new TextView(this);
+        speedBtn.setText("Замерить скорость");
+        speedBtn.setTextSize(16);
+        speedBtn.setTextColor(0xFFFFFFFF);
+        speedBtn.setGravity(Gravity.CENTER);
+        speedBtn.setPadding(d(14), d(16), d(14), d(16));
+        speedBtn.setBackground(solidAccent());
+        speedBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { runSpeedTest(); }
+        });
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        sp.topMargin = d(8);
+        speedContainer.addView(speedBtn, sp);
+
         gaugeView = new GaugeView(this);
         gaugeView.setTheme(accent, good, warn);
-        LinearLayout.LayoutParams gp = new LinearLayout.LayoutParams(d(220), d(130));
+        LinearLayout.LayoutParams gp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, d(130));
         gp.gravity = Gravity.CENTER_HORIZONTAL;
-        gp.topMargin = d(10);
+        gp.topMargin = d(6);
         speedContainer.addView(gaugeView, gp);
 
-        speedResultView = label("—", 20, text, true);
-        speedResultView.setPadding(0, d(10), 0, 0);
+        speedResultView = label("—", 22, text, true);
+        speedResultView.setGravity(Gravity.CENTER);
+        speedResultView.setPadding(0, d(8), 0, 0);
         speedContainer.addView(speedResultView);
 
         upView = label("", 15, text, false);
+        upView.setGravity(Gravity.CENTER);
         upView.setPadding(0, d(2), 0, 0);
         speedContainer.addView(upView);
 
         jitView = label("", 14, grey, false);
+        jitView.setGravity(Gravity.CENTER);
         jitView.setPadding(0, d(2), 0, 0);
         speedContainer.addView(jitView);
 
         lossView = label("", 14, grey, false);
+        lossView.setGravity(Gravity.CENTER);
         lossView.setPadding(0, d(2), 0, 0);
         speedContainer.addView(lossView);
 
         speedServerView = label("", 13, grey, false);
+        speedServerView.setGravity(Gravity.CENTER);
         speedServerView.setPadding(0, d(4), 0, 0);
         speedContainer.addView(speedServerView);
 
-        speedBtn = new TextView(this);
-        speedBtn.setText("Замерить скорость");
-        speedBtn.setTextSize(15);
-        speedBtn.setTextColor(accent);
-        speedBtn.setPadding(d(16), d(12), d(16), d(12));
-        styleButton(speedBtn);
-        speedBtn.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { runSpeedTest(); }
-        });
-        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-2, -2);
-        sp.topMargin = d(16);
-        speedContainer.addView(speedBtn, sp);
         root.addView(speedContainer);
 
         pinnedContainer = new LinearLayout(this);
@@ -802,7 +829,6 @@ public class MainActivity extends Activity {
 
     private LinearLayout createRow(final String host) {
         LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
         row.setPadding(0, d(4), d(4), d(4));
         row.setTag(host);
         row.setOnClickListener(new View.OnClickListener() {
