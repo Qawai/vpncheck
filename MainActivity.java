@@ -1,6 +1,10 @@
 package com.qawai.vpncheck;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -8,10 +12,12 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.ConnectivityManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -33,11 +39,14 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -186,10 +195,10 @@ public class MainActivity extends Activity {
 
     private static final String[] THEME_NAMES = {
             "Тёмная", "Чёрная (AMOLED)", "Светлая", "Терминал",
-            "Мягкий светлый", "Мягкий тёмный", "Лаванда", "Мята"
+            "Мягкий светлый", "Мягкий тёмный", "Лаванда", "Мята", "Системная"
     };
     private static final boolean[] IS_LIGHT = {
-            false, false, true, false, true, false, false, false
+            false, false, true, false, true, false, false, false, false
     };
     // bg, text, accent, grey, good, warn, bad
     private static final int[][] THEMES = {
@@ -211,8 +220,18 @@ public class MainActivity extends Activity {
              0xFF8FD6BD, 0xFFD6C56F, 0xFFE08A8A}
     };
 
+    private static final String NOTIF_CHANNEL = "status";
+
+    // эндпоинты для замера скорости скачивания
+    private static final String[] SPEED_URLS = {
+            "https://speed.cloudflare.com/__down?bytes=10000000",
+            "http://speedtest.tele2.net/10MB.zip",
+            "https://speed.cloudflare.com/__down?bytes=5000000",
+            "http://ftp.debian.org/debian/README"
+    };
+
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private final ExecutorService pool = Executors.newFixedThreadPool(10);
+    private final ExecutorService pool = Executors.newFixedThreadPool(32);
     private final Runnable autoRefresh = new Runnable() {
         @Override public void run() {
             refresh();
@@ -220,10 +239,11 @@ public class MainActivity extends Activity {
         }
     };
 
-    private TextView ipView, deepIpView, countryView, infoView, themeBtn;
+    private TextView ipView, deepIpView, countryView, infoView, themeBtn, notifyBtn;
     private ProgressBar progress;
-    private Button btn;
-    private LinearLayout listRoot, pinnedContainer;
+    private Button btn, speedBtn;
+    private LinearLayout listRoot, pinnedContainer, availabilityContainer, speedContainer;
+    private TextView tabAvail, tabSpeed, speedResultView, speedServerView;
     private final Map<String, LinearLayout> catContainers =
             new LinkedHashMap<String, LinearLayout>();
     private final Map<String, TextView> valueViews =
@@ -237,6 +257,8 @@ public class MainActivity extends Activity {
 
     private EditText searchView;
     private String query = "";
+    private boolean notifOn;
+    private int lastEffectiveTheme = -1;
     private final BroadcastReceiver netReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (!busy) refresh();
@@ -261,12 +283,27 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         dp = getResources().getDisplayMetrics().density;
         prefs = getSharedPreferences("vpncheck", MODE_PRIVATE);
+        notifOn = prefs.getBoolean("notif", false);
         themeIdx = prefs.getInt("theme", 0);
         stars = new HashSet<String>(prefs.getStringSet("stars", new HashSet<String>()));
         applyTheme();
+        lastEffectiveTheme = effectiveTheme();
         applyThemeIcon();
         buildUi();
         renderLists();
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // системная тема: переключаем иконку/оформление при смене тёмного режима
+        if (themeIdx == THEMES.length) {
+            int eff = effectiveTheme();
+            if (eff != lastEffectiveTheme) {
+                lastEffectiveTheme = eff;
+                recreate();
+            }
+        }
     }
 
     @Override
@@ -289,9 +326,21 @@ public class MainActivity extends Activity {
     }
 
     private void applyTheme() {
-        int[] t = THEMES[themeIdx];
+        int[] t = THEMES[effectiveTheme()];
         bg = t[0]; text = t[1]; accent = t[2]; grey = t[3];
         good = t[4]; warn = t[5]; bad = t[6];
+    }
+
+    private boolean isNight() {
+        int mode = getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK;
+        return mode == Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    // для "Системной" темы берём Тёмную или Светлую в зависимости от режима
+    private int effectiveTheme() {
+        if (themeIdx == THEMES.length) return isNight() ? 0 : 2;
+        return themeIdx;
     }
 
     // иконка приложения меняется под выбранную тему (переключаем activity-alias)
@@ -299,14 +348,15 @@ public class MainActivity extends Activity {
         try {
             PackageManager pm = getPackageManager();
             String pkg = getPackageName();
+            int idx = effectiveTheme();
             // сначала включаем нужную, потом выключаем остальные,
             // чтобы иконка в лаунчере не "пропадала" на мгновение
             pm.setComponentEnabledSetting(
-                    new ComponentName(pkg, pkg + ".MainActivityTheme" + themeIdx),
+                    new ComponentName(pkg, pkg + ".MainActivityTheme" + idx),
                     PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                     PackageManager.DONT_KILL_APP);
-            for (int i = 0; i < THEME_NAMES.length; i++) {
-                if (i == themeIdx) continue;
+            for (int i = 0; i < THEMES.length; i++) {
+                if (i == idx) continue;
                 pm.setComponentEnabledSetting(
                         new ComponentName(pkg, pkg + ".MainActivityTheme" + i),
                         PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
@@ -340,7 +390,7 @@ public class MainActivity extends Activity {
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.addView(label("Check Connection", 24, accent, true));
-        head.addView(label("  v1.11", 12, grey, false));
+        head.addView(label("  v1.12", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -384,6 +434,17 @@ public class MainActivity extends Activity {
             @Override public void onClick(View v) { showThemeMenu(v); }
         });
         controls.addView(themeBtn);
+
+        notifyBtn = new TextView(this);
+        notifyBtn.setText(notifOn ? "Уведомления ✓" : "Уведомления");
+        notifyBtn.setTextColor(notifOn ? accent : grey);
+        notifyBtn.setTextSize(14);
+        notifyBtn.setPadding(d(20), d(14), 0, d(14));
+        notifyBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { toggleNotifications(); }
+        });
+        controls.addView(notifyBtn);
+
         root.addView(controls);
 
         progress = new ProgressBar(this);
@@ -394,7 +455,31 @@ public class MainActivity extends Activity {
         pp.topMargin = d(4);
         root.addView(progress, pp);
 
-        root.addView(label("Пинг сервисов", 17, accent, true));
+        // вкладки
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        tabs.setPadding(0, d(10), 0, 0);
+        tabAvail = new TextView(this);
+        tabAvail.setText("Доступность");
+        tabAvail.setTextSize(16);
+        tabAvail.setPadding(0, d(6), d(24), d(6));
+        tabAvail.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showTab(true); }
+        });
+        tabs.addView(tabAvail);
+        tabSpeed = new TextView(this);
+        tabSpeed.setText("Скорость");
+        tabSpeed.setTextSize(16);
+        tabSpeed.setPadding(0, d(6), 0, d(6));
+        tabSpeed.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showTab(false); }
+        });
+        tabs.addView(tabSpeed);
+        root.addView(tabs);
+
+        // контейнер доступности
+        availabilityContainer = new LinearLayout(this);
+        availabilityContainer.setOrientation(LinearLayout.VERTICAL);
 
         searchView = new EditText(this);
         searchView.setHint("Поиск сервиса…");
@@ -410,15 +495,40 @@ public class MainActivity extends Activity {
                 renderLists();
             }
         });
-        root.addView(searchView);
+        availabilityContainer.addView(searchView);
 
-        root.addView(label("тап — закрепить ★ · удержание — перетащить",
+        availabilityContainer.addView(label("тап — закрепить ★ · удержание — перетащить",
                 12, grey, false));
 
         listRoot = new LinearLayout(this);
         listRoot.setOrientation(LinearLayout.VERTICAL);
         listRoot.setPadding(0, d(6), 0, 0);
-        root.addView(listRoot);
+        availabilityContainer.addView(listRoot);
+        root.addView(availabilityContainer);
+
+        // контейнер замера скорости
+        speedContainer = new LinearLayout(this);
+        speedContainer.setOrientation(LinearLayout.VERTICAL);
+        speedContainer.setVisibility(View.GONE);
+
+        speedResultView = label("—", 22, text, true);
+        speedResultView.setPadding(0, d(16), 0, 0);
+        speedContainer.addView(speedResultView);
+
+        speedServerView = label("", 14, grey, false);
+        speedServerView.setPadding(0, d(4), 0, 0);
+        speedContainer.addView(speedServerView);
+
+        speedBtn = new Button(this);
+        speedBtn.setText("Замерить скорость");
+        speedBtn.setTextColor(accent);
+        speedBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { runSpeedTest(); }
+        });
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-2, -2);
+        sp.topMargin = d(16);
+        speedContainer.addView(speedBtn, sp);
+        root.addView(speedContainer);
 
         pinnedContainer = new LinearLayout(this);
         pinnedContainer.setOrientation(LinearLayout.VERTICAL);
@@ -439,6 +549,14 @@ public class MainActivity extends Activity {
         });
 
         setContentView(scroll);
+        showTab(true);
+    }
+
+    private void showTab(boolean availability) {
+        availabilityContainer.setVisibility(availability ? View.VISIBLE : View.GONE);
+        speedContainer.setVisibility(availability ? View.GONE : View.VISIBLE);
+        tabAvail.setTextColor(availability ? accent : grey);
+        tabSpeed.setTextColor(availability ? grey : accent);
     }
 
     private void showThemeMenu(View anchor) {
@@ -900,6 +1018,8 @@ public class MainActivity extends Activity {
                                         progress.setVisibility(View.GONE);
                                         btn.setEnabled(true);
                                         busy = false;
+                                        updateWidget();
+                                        checkNotifications();
                                     }
                                 }
                             });
@@ -917,6 +1037,158 @@ public class MainActivity extends Activity {
                 }
             }
         });
+    }
+
+    // ===== замер скорости =====
+    private void runSpeedTest() {
+        if (speedBtn == null) return;
+        speedBtn.setEnabled(false);
+        speedResultView.setText("Измерение…");
+        speedServerView.setText("");
+        pool.execute(new Runnable() {
+            @Override public void run() {
+                long bestBytes = 0, bestNs = 0;
+                String bestName = "";
+                for (String u : SPEED_URLS) {
+                    long[] r = downloadMeasure(u, 8_000_000L, 6000);
+                    if (r != null && r[0] > bestBytes) {
+                        bestBytes = r[0]; bestNs = r[1]; bestName = hostOf(u);
+                    }
+                }
+                final long fb = bestBytes, fn = bestNs;
+                final String fname = bestName;
+                ui.post(new Runnable() {
+                    @Override public void run() {
+                        if (fb > 0 && fn > 0) {
+                            double mbps = fb * 8.0 / (fn / 1e9) / 1e6;
+                            speedResultView.setText(
+                                    String.format(Locale.US, "↓ %.1f Мбит/с", mbps));
+                            speedServerView.setText(fname);
+                        } else {
+                            speedResultView.setText("не удалось замерить");
+                            speedServerView.setText("");
+                        }
+                        speedBtn.setEnabled(true);
+                    }
+                });
+            }
+        });
+    }
+
+    private static String hostOf(String u) {
+        try { return new URL(u).getHost(); } catch (Exception e) { return u; }
+    }
+
+    private static long[] downloadMeasure(String u, long maxBytes, int timeoutMs) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(u).openConnection();
+            c.setConnectTimeout(3000);
+            c.setReadTimeout(timeoutMs);
+            c.setRequestProperty("User-Agent",
+                    "Mozilla/5.0 (Linux; Android 13) CheckConnection/1.12");
+            long t0 = System.nanoTime();
+            InputStream in = c.getInputStream();
+            byte[] buf = new byte[8192];
+            long total = 0;
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                total += n;
+                if (total >= maxBytes || System.currentTimeMillis() > deadline) break;
+            }
+            in.close();
+            return new long[]{total, System.nanoTime() - t0};
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    // ===== уведомления =====
+    private void toggleNotifications() {
+        notifOn = !notifOn;
+        prefs.edit().putBoolean("notif", notifOn).apply();
+        if (notifOn) {
+            ensureChannel();
+            if (Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                        != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(
+                        new String[]{"android.permission.POST_NOTIFICATIONS"}, 1001);
+            }
+        }
+        notifyBtn.setText(notifOn ? "Уведомления ✓" : "Уведомления");
+        notifyBtn.setTextColor(notifOn ? accent : grey);
+    }
+
+    private void ensureChannel() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationManager nm =
+                    (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            NotificationChannel ch = new NotificationChannel(NOTIF_CHANNEL,
+                    "Статус", NotificationManager.IMPORTANCE_DEFAULT);
+            ch.setDescription("Изменения доступности сервисов");
+            nm.createNotificationChannel(ch);
+        }
+    }
+
+    private void notifyChange(String title, String text) {
+        if (!notifOn) return;
+        NotificationManager nm =
+                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        Notification.Builder b;
+        if (Build.VERSION.SDK_INT >= 26) {
+            b = new Notification.Builder(this, NOTIF_CHANNEL);
+        } else {
+            b = new Notification.Builder(this);
+        }
+        b.setSmallIcon(R.mipmap.ic_launcher_0)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setAutoCancel(true);
+        nm.notify((int) System.currentTimeMillis(), b.build());
+    }
+
+    private void checkNotifications() {
+        if (!notifOn) return;
+        Set<String> prev = new HashSet<String>(
+                prefs.getStringSet("down", new HashSet<String>()));
+        Set<String> now = new HashSet<String>();
+        for (String h : allHosts()) {
+            Integer code = resultCodes.get(h);
+            if (code == null || code <= 0 || code >= 400) now.add(h);
+        }
+        StringBuilder down = new StringBuilder(), up = new StringBuilder();
+        for (String h : now) if (!prev.contains(h)) down.append(nameOf(h)).append(", ");
+        for (String h : prev) if (!now.contains(h)) up.append(nameOf(h)).append(", ");
+        if (down.length() > 0)
+            notifyChange("Недоступно", trimList(down.toString()));
+        if (up.length() > 0)
+            notifyChange("Снова доступно", trimList(up.toString()));
+        prefs.edit().putStringSet("down", now).apply();
+    }
+
+    private static String trimList(String s) {
+        return s.length() > 1 ? s.substring(0, s.length() - 2) : s;
+    }
+
+    // ===== виджет =====
+    private void updateWidget() {
+        int total = allHosts().size();
+        int ok = 0;
+        for (String h : allHosts()) {
+            Integer code = resultCodes.get(h);
+            if (code != null && code > 0 && code < 400) ok++;
+        }
+        String status = "✓ " + ok + "/" + total + " доступно";
+        String time = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
+        prefs.edit()
+                .putString("w_status", status)
+                .putString("w_time", "обновлено " + time)
+                .apply();
+        StatusWidget.push(this);
     }
 
     private static class Counter {
@@ -976,17 +1248,17 @@ public class MainActivity extends Activity {
             int code;
             while (true) {
                 c = (HttpURLConnection) url.openConnection();
-                c.setConnectTimeout(5000);
-                c.setReadTimeout(5000);
+                c.setConnectTimeout(2500);
+                c.setReadTimeout(3000);
                 c.setRequestMethod("GET");
                 c.setInstanceFollowRedirects(false);
                 c.setRequestProperty("User-Agent",
-                        "Mozilla/5.0 (Linux; Android 13) VPNCheck/1.11");
+                        "Mozilla/5.0 (Linux; Android 13) CheckConnection/1.12");
                 c.setRequestProperty("Accept", "*/*");
                 code = c.getResponseCode();
                 if (code == 301 || code == 302 || code == 303
                         || code == 307 || code == 308) {
-                    if (redirects >= 3) break;
+                    if (redirects >= 1) break;
                     String loc = c.getHeaderField("Location");
                     c.disconnect();
                     c = null;

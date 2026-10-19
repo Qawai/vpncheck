@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/w_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="10dp">
+
+    <TextView
+        android:id="@+id/w_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Check Connection"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp"
+        android:textStyle="bold"/>
+
+    <TextView
+        android:id="@+id/w_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="—"
+        android:textColor="#FF66BB6A"
+        android:textSize="16sp"
+        android:textStyle="bold"/>
+
+    <TextView
+        android:id="@+id/w_time"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textColor="#FF9AA0A6"
+        android:textSize="11sp"/>
+
+    <Button
+        android:id="@+id/w_refresh"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Обновить"
+        android:textSize="12sp"/>
+</LinearLayout>
