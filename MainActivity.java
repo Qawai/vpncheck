@@ -295,7 +295,7 @@ public class MainActivity extends Activity {
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.addView(label("Check Connect", 24, accent, true));
-        head.addView(label("  v1.8", 12, grey, false));
+        head.addView(label("  v1.9", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -637,6 +637,7 @@ public class MainActivity extends Activity {
 
         pool.execute(new Runnable() {
             @Override public void run() {
+                try {
                 // === БЫСТРЫЙ режим: 2ip.ru как основной источник ===
                 final String[] QUICK_URL = {
                         "https://2ip.ru/ip/",
@@ -818,6 +819,15 @@ public class MainActivity extends Activity {
                                     }
                                 }
                             });
+                        }
+                    });
+                }
+                } catch (Throwable t) {
+                    ui.post(new Runnable() {
+                        @Override public void run() {
+                            progress.setVisibility(View.GONE);
+                            btn.setEnabled(true);
+                            busy = false;
                         }
                     });
                 }
