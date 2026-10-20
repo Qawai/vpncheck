@@ -446,7 +446,7 @@ public class MainActivity extends Activity {
 
         LinearLayout head = new LinearLayout(this);
         head.addView(label("Check Connection", 24, accent, true));
-        head.addView(label("  v2.0.3", 12, grey, false));
+        head.addView(label("  v2.0.4", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -1738,8 +1738,8 @@ public class MainActivity extends Activity {
             int code;
             while (true) {
                 c = (HttpURLConnection) url.openConnection();
-                c.setConnectTimeout(2500);
-                c.setReadTimeout(3000);
+                c.setConnectTimeout(3000);
+                c.setReadTimeout(5000);
                 c.setRequestMethod("GET");
                 c.setInstanceFollowRedirects(false);
                 c.setRequestProperty("User-Agent",
