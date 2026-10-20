@@ -251,7 +251,7 @@ public class MainActivity extends Activity {
     private static final int WARN_MS = 1800;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private final ExecutorService pool = Executors.newFixedThreadPool(32);
+    private final ExecutorService pool = Executors.newCachedThreadPool();
     private final Runnable autoRefresh = new Runnable() {
         @Override public void run() {
             refresh();
@@ -446,7 +446,7 @@ public class MainActivity extends Activity {
 
         LinearLayout head = new LinearLayout(this);
         head.addView(label("Check Connection", 24, accent, true));
-        head.addView(label("  v2.0.2", 12, grey, false));
+        head.addView(label("  v2.0.3", 12, grey, false));
         root.addView(head);
 
         ipView = label("IP: ...", 18, text, true);
@@ -1115,6 +1115,49 @@ public class MainActivity extends Activity {
         pool.execute(new Runnable() {
             @Override public void run() {
                 try {
+                final List<String> hosts = allHosts();
+                final Counter done = new Counter();
+                for (final String host : hosts) {
+                    pool.execute(new Runnable() {
+                        @Override public void run() {
+                            CheckResult cr = httpCheck(host);
+                            synchronized (resultMs) {
+                                if (cr != null) {
+                                    int prev = prefs.getInt("hist_" + host, -1);
+                                    resultMs.put(host, cr.ms);
+                                    resultCodes.put(host, cr.code);
+                                    int trend = prev < 0 ? 0
+                                            : cr.ms > prev ? 1 : cr.ms < prev ? -1 : 0;
+                                    prefs.edit().putInt("hist_" + host, cr.ms).apply();
+                                    // у ответивших не показываем код — только время
+                                    resultTexts.put(host,
+                                            cr.ms + " мс" + trendArrow(trend));
+                                } else {
+                                    resultCodes.put(host, 0);
+                                    resultTexts.put(host, "недоступен");
+                                }
+                            }
+                            final int finished = done.next();
+                            ui.post(new Runnable() {
+                                @Override public void run() {
+                                    TextView tv = valueViews.get(host);
+                                    if (tv != null) {
+                                        tv.setText(resultTexts.get(host));
+                                        tv.setTextColor(colorFor(host));
+                                    }
+                                    if (finished == hosts.size()) {
+                                        progress.setVisibility(View.GONE);
+                                        btn.setEnabled(true);
+                                        busy = false;
+                                        updateSummary();
+                                        updateWidget();
+                                        updatePersistentNotification();
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
                 // === БЫСТРЫЙ режим: 2ip.ru как основной источник ===
                 final String[] QUICK_URL = {
                         "https://2ip.ru/ip/",
@@ -1271,49 +1314,6 @@ public class MainActivity extends Activity {
                     }
                 });
 
-                final List<String> hosts = allHosts();
-                final Counter done = new Counter();
-                for (final String host : hosts) {
-                    pool.execute(new Runnable() {
-                        @Override public void run() {
-                            CheckResult cr = httpCheck(host);
-                            synchronized (resultMs) {
-                                if (cr != null) {
-                                    int prev = prefs.getInt("hist_" + host, -1);
-                                    resultMs.put(host, cr.ms);
-                                    resultCodes.put(host, cr.code);
-                                    int trend = prev < 0 ? 0
-                                            : cr.ms > prev ? 1 : cr.ms < prev ? -1 : 0;
-                                    prefs.edit().putInt("hist_" + host, cr.ms).apply();
-                                    // у ответивших не показываем код — только время
-                                    resultTexts.put(host,
-                                            cr.ms + " мс" + trendArrow(trend));
-                                } else {
-                                    resultCodes.put(host, 0);
-                                    resultTexts.put(host, "недоступен");
-                                }
-                            }
-                            final int finished = done.next();
-                            ui.post(new Runnable() {
-                                @Override public void run() {
-                                    TextView tv = valueViews.get(host);
-                                    if (tv != null) {
-                                        tv.setText(resultTexts.get(host));
-                                        tv.setTextColor(colorFor(host));
-                                    }
-                                    if (finished == hosts.size()) {
-                                        progress.setVisibility(View.GONE);
-                                        btn.setEnabled(true);
-                                        busy = false;
-                                        updateSummary();
-                                        updateWidget();
-                                        updatePersistentNotification();
-                                    }
-                                }
-                            });
-                        }
-                    });
-                }
                 } catch (Throwable t) {
                     ui.post(new Runnable() {
                         @Override public void run() {
